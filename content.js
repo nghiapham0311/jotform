@@ -1,4 +1,105 @@
 // content.js
+
+// Extract only digits from input string
+function digitsOnly(s) {
+  return String(s || '').replace(/\D+/g, '');
+}
+
+// Format "digits" into a visual mask "(###) ###-####" / "____-___" etc.
+function applyMaskFromPattern(mask, digits) {
+  // treat _, #, 9 as placeholders for digits
+  const placeholders = new Set(['_', '#', '9']);
+  let out = '';
+  let i = 0;
+  for (const ch of mask) {
+    if (placeholders.has(ch)) {
+      if (i < digits.length) out += digits[i++];
+      else out += ''; // or keep placeholder if you want to show, but validator hates it
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+// Fire a "realistic" sequence of events so JotForm validators run
+function setValueWithEvents(el, val) {
+  el.focus();
+  // clear old value in a way frameworks detect
+  el.setSelectionRange(0, (el.value || '').length);
+  el.setRangeText('', 0, (el.value || '').length, 'end');
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+
+  // set the formatted value
+  el.value = val;
+  el.setSelectionRange(val.length, val.length);
+
+  // notify listeners
+  el.dispatchEvent(new InputEvent('input', {
+    bubbles: true,
+    cancelable: true,
+    inputType: 'insertFromPaste',
+    data: val
+  }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  el.blur();
+}
+
+// Fill a JotForm masked phone input (covers single field, multi-part, intl-tel-input)
+async function fillMaskedPhone(comp, phoneStr) {
+  const digits = digitsOnly(phoneStr);
+  if (!digits) return false;
+
+  // (A) The exact single full field (your screenshot): id like input_*_full, data-type=mask-number
+  let el = comp.querySelector("input[id$='_full'][data-type='mask-number'], input.mask-phone-number, input.forPhone");
+  if (el) {
+    const mask = el.getAttribute('maskvalue') || el.getAttribute('data-maskvalue') || '(###) ###-####';
+    // how many digits are required by the mask
+    const need = (mask.match(/[_#9]/g) || []).length;
+    if (digits.length < need) {
+      // not enough digits → don't set (will fail validation)
+      return false;
+    }
+    const formatted = applyMaskFromPattern(mask, digits);
+    setValueWithEvents(el, formatted);
+    return true;
+  }
+
+  // (B) intl-tel-input variant
+  el = comp.querySelector('.iti .iti__tel-input, .iti input[type="tel"]');
+  if (el) {
+    setValueWithEvents(el, digits); // plugin formats visually
+    return true;
+  }
+
+  // (C) Two/three-part phones (area + number, etc.)
+  const parts = Array.from(
+    comp.querySelectorAll(
+      "input[data-component='area'], input[data-component='phone'], input[type='tel'][name*='area' i], input[type='tel'][name*='phone' i]"
+    )
+  );
+  if (parts.length >= 2) {
+    // guess lengths
+    const a = parts[0], b = parts[1], c = parts[2];
+    const la = a.maxLength || 3, lb = b.maxLength || (c ? 3 : digits.length - la), lc = c?.maxLength || 4;
+    setValueWithEvents(a, digits.slice(0, la));
+    setValueWithEvents(b, digits.slice(la, la + lb));
+    if (c) setValueWithEvents(c, digits.slice(la + lb, la + lb + lc));
+    return true;
+  }
+
+  // (D) Fallback: a single <input type="tel">
+  el = comp.querySelector("input[type='tel']");
+  if (el) {
+    setValueWithEvents(el, digits);
+    return true;
+  }
+
+  return false;
+}
+
+//===============================================
+
 (function () {
   // helpers
   const qs = (sel, root = document) => root.querySelector(sel);
@@ -219,11 +320,22 @@
               break;
             }
 
+            // case 'mask-number': {
+            //   // feed phone digits key-by-key to satisfy masks
+            //   const digits = String(payload.phone || '').split('');
+            //   for (const ch of digits) typeMasked(comp, ch);
+            //   didAny = true;
+            //   break;
+            // }
             case 'mask-number': {
-              // feed phone digits key-by-key to satisfy masks
-              const digits = String(payload.phone || '').split('');
-              for (const ch of digits) typeMasked(comp, ch);
-              didAny = true;
+              const ok = await fillMaskedPhone(comp, payload.phone);
+              didAny = ok || didAny;
+              break;
+            }
+
+            case 'control_phone': { // outer container sometimes reports this type
+              const ok = await fillMaskedPhone(comp, payload.phone);
+              didAny = ok || didAny;
               break;
             }
 
