@@ -1,38 +1,49 @@
 {
-    "manifest_version": 3,
-    "name": "Jotform autofill",
-    "version": "1.0",
-    "description": "Automatically fill forms with predefined data.\nCopyright ©  2014 FB.com/100004518225124",
-    "action": {
-        "default_popup": "popup.html",
-        "default_icon": {
-            "16": "icon-16.png",
-            "48": "icon-48.png",
-            "128": "icon-128.png"
-        }
-    },
-    "icons": {
-        "16": "icon-16.png",
-        "48": "icon-48.png",
-        "128": "icon-128.png"
-    },
-    "permissions": [
-        "tabs",
-        "activeTab",
-        "storage",
-        "scripting"
-    ],
-    "background": {
-        "service_worker": "background.js"
-    },
-    "content_scripts": [
-        {
-            "matches": [
-                "<all_urls>"
-            ],
-            "js": [
-                "content.js"
-            ]
-        }
-    ]
+  "manifest_version": 3,
+  "name": "Jotform autofill",
+  "version": "1.0",
+  "description": "Automatically fill forms with predefined data.\nCopyright ©  2014 FB.com/100004518225124",
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon-16.png",
+      "48": "icon-48.png",
+      "128": "icon-128.png"
+    }
+  },
+
+  "icons": {
+    "16": "icon-16.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
+  },
+
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+
+  "host_permissions": [
+    "https://form.jotform.com/*",
+    "https://app-widgets.jotform.io/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://form.jotform.com/*",
+        "https://app-widgets.jotform.io/*"
+      ],
+      "js": ["content.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ]
 }
