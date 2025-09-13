@@ -435,11 +435,19 @@ function isDisabledBtn(btn) {
       const card = qs("div[class*='isVisible']");
       if (!card) continue;
 
+      // const cardId = card.getAttribute('id') || '';
+      // if (cardId === lastCardId) {
+      //   if (clickNextOrSubmit(card, allowSubmit)) return;
+      //   continue;
+      // }
       const cardId = card.getAttribute('id') || '';
       if (cardId === lastCardId) {
-        if (clickNextOrSubmit(card, allowSubmit)) return;
+        const action = clickNextOrSubmit(card, allowSubmit);
+        if (action === 'next')      { await delay(delayTime); continue; }
+        if (action === 'submitted') { window.isFilling = false; break; }
         continue;
       }
+
       lastCardId = cardId;
 
       const fieldId = (card.getAttribute('id') || '').replace('cid_', '');
@@ -541,6 +549,28 @@ function isDisabledBtn(btn) {
               break;
             }
 
+            case 'control_widget': {
+              const tokens = (payload.checkboxTxtArr || []).flat();
+              if (!tokens.length) break;
+
+              const frame = comp.querySelector('iframe');
+              if (frame) {
+                const origin = (() => { try { return new URL(frame.src).origin; } catch { return '*'; } })();
+                const send = () => frame.contentWindow?.postMessage({ __af: true, kind: 'tickWidget', tokens }, origin);
+
+                if (frame.complete || frame.contentDocument?.readyState === 'complete') send();
+                else frame.addEventListener('load', send, { once: true });
+
+                // small retry window in case widget re-renders list
+                for (let i = 1; i <= 20; i++) setTimeout(send, i * 150);
+              }
+
+              didAny = true;
+              break;
+            }
+
+
+
             default:
               // ignore the rest
               break;
@@ -556,6 +586,105 @@ function isDisabledBtn(btn) {
     }
   }
 
+// ===================== WIDGET MODE (runs inside app-widgets.jotform.io) =====================
+const IS_WIDGET = /(^|\.)app-widgets\.jotform\.io$/.test(location.host);
+
+if (IS_WIDGET) {
+  console.log('[AF] widget mode', location.href);
+
+  // Dispatch a realistic click sequence so widget JS updates hidden values
+  function clickLikeUser(el) {
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const x = Math.max(1, r.left + 5), y = Math.max(1, r.top + 5);
+    const opts = (type, extra={}) => Object.assign({
+      bubbles: true, cancelable: true, view: window,
+      clientX: x, clientY: y
+    }, extra);
+
+    el.dispatchEvent(new PointerEvent('pointerdown', opts('pointerdown', {pointerType: 'mouse', pointerId: 1})));
+    el.dispatchEvent(new MouseEvent('mousedown',   opts('mousedown',   {buttons: 1})));
+    el.dispatchEvent(new PointerEvent('pointerup',   opts('pointerup', {pointerType: 'mouse', pointerId: 1})));
+    el.dispatchEvent(new MouseEvent('mouseup',     opts('mouseup')));
+    el.dispatchEvent(new MouseEvent('click',       opts('click')));
+  }
+
+  // Wait until the list items are rendered, then run cb()
+  function whenListReady(cb) {
+    const ready = () => document.querySelector('#gr_list li, .checklist li');
+    if (ready()) return cb();
+    const mo = new MutationObserver(() => { if (ready()) { mo.disconnect(); cb(); } });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  // MAIN: tick items by tokens; skip disabled / "None" / sold-out (line-through, disabled)
+  function tickWidgetChecklist(tokens = []) {
+    const want = (tokens || []).map(s => String(s).toLowerCase()).filter(Boolean);
+    if (!want.length) return false;
+
+    const root = document.querySelector('#gr_list, .checklist') || document;
+    const rows = Array.from(root.querySelectorAll('li'));
+    if (!rows.length) return false;
+
+    let changed = false;
+
+    for (const li of rows) {
+      const input = li.querySelector("input[type='checkbox']");
+      if (!input) continue;
+
+      const disabled =
+        input.disabled ||
+        /\bline-through\b/.test(li.className) ||
+        /\bdisabled\b/i.test(li.className);
+
+      const rawText = (li.innerText || '')
+        .replace(/\b\d+\s+available\b/ig, '')
+        .replace(/\bnone\b/ig, '')
+        .trim()
+        .toLowerCase();
+
+      const valText = (input.value || '').toLowerCase();
+      const shouldPick = !disabled && want.some(w => rawText.includes(w) || valText.includes(w));
+      if (!shouldPick) continue;
+
+      if (!input.checked) {
+        const label = li.querySelector(`label[for='${CSS.escape(input.id)}']`) || li.querySelector('label');
+        // Prefer clicking label so widget logic runs
+        clickLikeUser(label || input);
+
+        // Fallback if click was swallowed by framework
+        if (!input.checked) {
+          input.checked = true;
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          label?.classList.add('checked'); // purely cosmetic
+        }
+        changed = true;
+      }
+    }
+
+    console.log('[AF] widget ticked =', changed);
+    return changed;
+  }
+
+  // Receive tokens from extension (direct) or from top frame via postMessage
+  chrome.runtime?.onMessage?.addListener?.((msg) => {
+    if (msg?.action === 'tickWidget' || msg?.action === 'startFilling') {
+      const tokens = (msg?.data?.checkboxTxtArr || []).flat();
+      whenListReady(() => tickWidgetChecklist(tokens));
+    }
+  });
+
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (d && d.__af === true && d.kind === 'tickWidget') {
+      whenListReady(() => tickWidgetChecklist(d.tokens || []));
+    }
+  });
+}
+// =================== END WIDGET MODE =====================
+
+
+
   chrome.runtime.onMessage.addListener((message) => {
     if (message.action !== 'startFilling') return;
     const data = message.data;
@@ -568,3 +697,4 @@ function isDisabledBtn(btn) {
     }
   });
 })();
+
