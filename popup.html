@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto Fill Form</title>
+    <!-- Bootstrap 5 CSS từ tệp cục bộ -->
+    <link href="css/bootstrap.min.css" rel="stylesheet">
+
+    <style>
+        body {
+            width: 300px;
+        }
+
+        footer {
+            font-size: 12px;
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        #statusMessage {
+            display: none;
+            /* Ẩn thông báo mặc định */
+            margin-bottom: 20px;
+            /* Thêm khoảng cách dưới thông báo */
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container mt-3">
+        <h1 class="h4">Auto Fill Form</h1>
+        <div class="mb-3">
+            <label for="firstName" class="form-label">Delay time (ms)</label>
+            <input type="text" class="form-control" id="delayTime" value="250" placeholder="Delay time (ms)">
+        </div>
+
+        <div class="mb-3">
+            <label for="firstName" class="form-label">First Name</label>
+            <input type="text" class="form-control" id="firstName" placeholder="First Name">
+        </div>
+        <div class="mb-3">
+            <label for="lastName" class="form-label">Last Name</label>
+            <input type="text" class="form-control" id="lastName" placeholder="Last Name">
+        </div>
+        <div class="mb-3">
+            <label for="email" class="form-label">Email</label>
+            <input type="email" class="form-control" id="email" placeholder="Email">
+        </div>
+        <div class="mb-3">
+            <label for="phone" class="form-label">Phone Number</label>
+            <input type="tel" class="form-control" id="phone" placeholder="Phone Number">
+        </div>
+        <div class="mb-3">
+            <label for="dob" class="form-label">Date of Birth</label>
+            <input type="date" class="form-control" id="dob" placeholder="Date of Birth">
+        </div>
+
+        <!-- Vùng thêm/xóa các cặp key/value -->
+        <div class="key-value-pairs mb-3">
+            <h6>Custom questions/answers</h6>
+            <div id="pairs-container"></div>
+            <button id="add-pair" class="btn btn-primary btn-sm mt-2">Add questions/answer</button>
+        </div>
+
+        <div class="value-list mb-3">
+            <h6>Custom checkbox</h6>
+            <div id="values-container"></div>
+            <button id="add-value" class="btn btn-primary btn-sm mt-2">Add Value</button>
+        </div>
+
+        <!-- Ô tích cho việc Submit hay không -->
+        <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="submitForm">
+            <label class="form-check-label" for="submitForm">Submit form automatically</label>
+        </div>
+
+        <!-- Dòng thông báo trạng thái -->
+        <!-- <div id="statusMessage" class="alert alert-info text-center" style="display: none;"> -->
+        <div id="statusMessage" style="display: none;">
+            <!-- Thông báo trạng thái sẽ được cập nhật qua JavaScript -->
+        </div>
+
+        <!-- <button id="stop" class="btn btn-secondary">Stop</button>
+        <button id="start" class="btn btn-primary">Start</button> -->
+
+        <div class="d-flex justify-content-end">
+            <button id="stop" class="btn btn-secondary me-2 btn-large" disabled>Stop</button>
+            <button id="start" class="btn btn-primary btn-large">Start</button>
+        </div>
+    </div>
+
+    <footer>
+        <p>&copy; <span id="year"></span> <a href="https://FB.com/100004518225124" target="_blank">Tuan.VHIT</a>. All
+            rights reserved.</p>
+    </footer>
+
+    <!-- Bootstrap 5 JS từ tệp cục bộ -->
+    <script src="js/bootstrap.bundle.min.js"></script>
+    <script src="popup.js"></script>
+    <!-- Thêm footer.js -->
+    <script src="footer.js"></script>
+</body>
+
+</html>
