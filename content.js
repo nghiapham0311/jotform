@@ -98,6 +98,149 @@ async function fillMaskedPhone(comp, phoneStr) {
   return false;
 }
 
+// Return normalized label text for a field container (works with label + span + aria-labelledby)
+function getFieldLabelText(comp) {
+  const input = comp.querySelector('input, textarea, select');
+  const ariaIds = (input?.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
+  let pieces = [];
+  for (const id of ariaIds) {
+    const el = document.getElementById(id);
+    if (el) pieces.push(el.innerText || el.textContent || '');
+  }
+  let text = pieces.join(' ').trim();
+
+  if (!text) {
+    const container = comp.closest("li[id^='id_'], [data-type]") || comp;
+    const labelEl =
+      container.querySelector('.jfQuestion-label, .jf-question-label, .form-label') ||
+      container.querySelector("[id^='label_']") ||
+      container.querySelector('label');
+    if (labelEl) text = (labelEl.innerText || labelEl.textContent || '').trim();
+  }
+
+  return text
+    .replace(/\*\s*$/, '')                              // trailing required star
+    .replace(/\bThis field is required\.?$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Decide whether a radio group looks like a consent/agree question
+function isConsentGroup(labelText) {
+  const s = (labelText || '').toLowerCase();
+  return /\bagree|agreed|accept|consent|terms|policy|privacy|understand\b/.test(s);
+}
+
+// Collect radio options with their visible text
+function getRadioOptions(comp) {
+  return Array.from(comp.querySelectorAll("input[type='radio']")).map(input => {
+    let txt = '';
+    const wrap = input.closest('label');
+    if (wrap) {
+      const t = wrap.querySelector('.jfRadio-labelText') || wrap;
+      txt = (t.innerText || t.textContent || '').trim();
+    } else {
+      const lab = comp.querySelector(`label[for='${input.id}']`);
+      const t = lab?.querySelector('.jfRadio-labelText') || lab;
+      if (t) txt = (t.innerText || t.textContent || '').trim();
+    }
+    return { input, text: txt, value: (input.value || '').trim() };
+  });
+}
+
+// Pick an option matching tokens or consent synonyms
+function selectRadioAgree(comp, tokens = []) {
+  const opts = getRadioOptions(comp);
+  if (!opts.length) return false;
+
+  const tks = (tokens || []).map(t => String(t).toLowerCase()).filter(Boolean);
+  const synonyms = ['agree','i agree','accept','i accept','consent','yes','ok','okay','i understand'];
+
+  const match = (o) => {
+    const tx = o.text.toLowerCase();
+    const vv = o.value.toLowerCase();
+    return (tks.length && tks.some(t => tx.includes(t) || vv.includes(t))) ||
+           synonyms.some(t => tx.includes(t) || vv.includes(t));
+  };
+
+  const pick = opts.find(match) || null;
+  if (!pick) return false;
+
+  if (!pick.input.checked) {
+    pick.input.click();                           // let JotForm handle checked state
+    pick.input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  return true;
+}
+
+// Return true if at least one consent/agree control was toggled
+function tryAgreeToggles(card) {
+  // Collect all radios/checkboxes inside the visible card
+  const inputs = Array.from(
+    card.querySelectorAll("input[type='checkbox'], input[type='radio']")
+  );
+
+  // Build a label text for an input: its own label text + group label text
+  const getLabelText = (el) => {
+    const byFor = el.id ? card.querySelector(`label[for='${el.id}']`) : null;
+    const wrap  = el.closest('label');
+    const own   = (wrap?.innerText || byFor?.innerText || '').trim();
+
+    // Group/question label (e.g. <label id="label_9"> ... <span>...text...</span>)
+    const groupLabel =
+      card.querySelector('.jfQuestion-label, .jf-question-label, [id^="label_"]');
+    const group = (groupLabel?.innerText || '').trim();
+
+    return `${own} ${group}`.toLowerCase();
+  };
+
+  // Keywords that indicate consent/agree options
+  const agreeTokens = [
+    'agree','i agree','agreed',
+    'accept','i accept',
+    'consent',
+    'yes','ok','okay',
+    'i understand','understand',
+    'terms','policy','privacy'
+  ];
+
+  let changed = false;
+
+  for (const el of inputs) {
+    const txt = getLabelText(el);
+    if (agreeTokens.some(t => txt.includes(t))) {
+      if (!el.checked) {
+        el.click(); // let JotForm handle state/validation
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
+}
+
+function isVisible(el) {
+  if (!el) return false;
+  const cs = getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+  if ((el.offsetWidth|0) === 0 && (el.offsetHeight|0) === 0 && el.getClientRects().length === 0) return false;
+  return true;
+}
+
+function isDisabledBtn(btn) {
+  if (!btn) return true;
+  if (btn.disabled === true) return true;
+  if (btn.matches?.(':disabled')) return true;
+  const aria = btn.getAttribute('aria-disabled');
+  if (aria && aria !== 'false') return true;
+  const cls = btn.className || '';
+  if (/\bdisabled\b/i.test(cls) || /\bisDisabled\b/.test(cls)) return true;
+  const cs = getComputedStyle(btn);
+  if (cs.pointerEvents === 'none') return true;
+  return false;
+}
+
 //===============================================
 
 (function () {
@@ -187,16 +330,51 @@ async function fillMaskedPhone(comp, phoneStr) {
     //   }
     // }
     // return false;
+
+    //===============
+    // const nextBtn =
+    //   card.querySelector("button[data-testid^='nextButton_']") ||
+    //   card.querySelector("button.form-pagebreak-next");
+
+    // if (nextBtn) { nextBtn.click(); return 'next'; }
+
+    // if (allowSubmit) {
+    //   const submit = card.querySelector("button[class*='form-submit-button']");
+    //   if (submit) { submit.click(); return 'submitted'; }
+    // }
+    // return null;
+    //===============
+
     const nextBtn =
-      card.querySelector("button[data-testid^='nextButton_']") ||
-      card.querySelector("button.form-pagebreak-next");
+    card.querySelector("button[data-testid^='nextButton_']") ||
+    card.querySelector("button.form-pagebreak-next") ||
+    card.querySelector("button[name='next']");
 
-    if (nextBtn) { nextBtn.click(); return 'next'; }
+    if (nextBtn && isVisible(nextBtn)) {
+      // If Next is disabled, try to enable by ticking agree/consent controls
+      if (isDisabledBtn(nextBtn)) {
+        const toggled = tryAgreeToggles(card); // ← new
+        // Outer loop will wait a tick; just re-check now
+        if (isDisabledBtn(nextBtn)) return null;
+      }
 
-    if (allowSubmit) {
-      const submit = card.querySelector("button[class*='form-submit-button']");
-      if (submit) { submit.click(); return 'submitted'; }
+      nextBtn.scrollIntoView({ block: 'center' });
+      nextBtn.click();
+      return 'next';
     }
+
+    // Submit (last card)
+    if (allowSubmit) {
+      const submit =
+        card.querySelector("button[class*='form-submit-button']") ||
+        document.querySelector("button[class*='form-submit-button']");
+      if (submit && isVisible(submit) && !isDisabledBtn(submit)) {
+        submit.scrollIntoView({ block: 'center' });
+        submit.click();
+        return 'submitted';
+      }
+    }
+
     return null;
   }
 
@@ -343,6 +521,23 @@ async function fillMaskedPhone(comp, phoneStr) {
             case 'control_phone': { // outer container sometimes reports this type
               const ok = await fillMaskedPhone(comp, payload.phone);
               didAny = ok || didAny;
+              break;
+            }
+
+            case 'control_radio': {
+              const labelText = getFieldLabelText(comp);
+              // Flatten your custom checkbox tokens so they can also drive radio selection
+              const customTokens = (payload.checkboxTxtArr || []).flat();
+
+              // Only auto-select if this looks like a consent group OR tokens match the group label
+              const shouldAuto =
+                isConsentGroup(labelText) ||
+                (customTokens.length && customTokens.some(t => labelText.toLowerCase().includes(String(t).toLowerCase())));
+
+              if (shouldAuto) {
+                const ok = selectRadioAgree(comp, customTokens);
+                didAny = ok || didAny;
+              }
               break;
             }
 
