@@ -73,19 +73,30 @@
 
   // Click the "Next" button on card forms, or submit when allowed
   function clickNextOrSubmit(card, allowSubmit) {
-    const nextBtn = qs(`button[data-testid^='nextButton_']`, card);
-    if (nextBtn && nextBtn.checkVisibility()) {
-      nextBtn.click();
-      return true;
-    }
-    if (allowSubmit) {
-      const submit = qs(`button[class*='form-submit-button']`, card);
-      if (submit && submit.checkVisibility()) {
-        submit.click();
-        return true;
+    // const nextBtn = qs(`button[data-testid^='nextButton_']`, card);
+    // if (nextBtn && nextBtn.checkVisibility()) {
+    //   nextBtn.click();
+    //   return true;
+    // }
+    // if (allowSubmit) {
+    //   const submit = qs(`button[class*='form-submit-button']`, card);
+    //   if (submit && submit.checkVisibility()) {
+    //     submit.click();
+    //     return true;
+    //   }
+    // }
+    // return false;
+      const nextBtn =
+        card.querySelector("button[data-testid^='nextButton_']") ||
+        card.querySelector("button.form-pagebreak-next");
+
+      if (nextBtn) { nextBtn.click(); return 'next'; }
+
+      if (allowSubmit) {
+        const submit = card.querySelector("button[class*='form-submit-button']");
+        if (submit) { submit.click(); return 'submitted'; }
       }
-    }
-    return false;
+      return null;
   }
 
   // Type a mask-number (phone) by simulating key presses (works with some masked inputs)
@@ -224,7 +235,10 @@
       }
 
       // advance the card form
-      if (clickNextOrSubmit(card, allowSubmit)) return;
+      // if (clickNextOrSubmit(card, allowSubmit)) return;
+      const action = clickNextOrSubmit(card, allowSubmit);
+      if (action === 'next') { await delay(delayTime); continue; }
+      if (action === 'submitted') { window.isFilling = false; break; }
     }
   }
 
