@@ -241,7 +241,13 @@ function isDisabledBtn(btn) {
   return false;
 }
 
-//===============================================
+// Helper: lấy số Day từ label, ví dụ "Day 2" -> 2
+function parseDayNumber(labelText) {
+  const m = /(?:^|\b)day\s*(\d+)\b/i.exec(String(labelText || ''));
+  return m ? parseInt(m[1], 10) : null;
+}
+
+//====================== HELPERS=========================
 
 (function () {
   // helpers
@@ -614,25 +620,57 @@ function isDisabledBtn(btn) {
               break;
             }
 
+            // case 'control_widget': {
+            //   const tokens = (payload.checkboxTxtArr || []).flat();
+            //   if (!tokens.length) break;
+
+            //   const frame = comp.querySelector('iframe');
+            //   if (frame) {
+            //     const origin = (() => { try { return new URL(frame.src).origin; } catch { return '*'; } })();
+            //     const send = () => frame.contentWindow?.postMessage({ __af: true, kind: 'tickWidget', tokens }, origin);
+
+            //     if (frame.complete || frame.contentDocument?.readyState === 'complete') send();
+            //     else frame.addEventListener('load', send, { once: true });
+
+            //     // small retry window in case widget re-renders list
+            //     for (let i = 1; i <= 20; i++) setTimeout(send, i * 150);
+            //   }
+
+            //   didAny = true;
+            //   break;
+            // }
+
             case 'control_widget': {
               const tokens = (payload.checkboxTxtArr || []).flat();
               if (!tokens.length) break;
 
+              // Lấy label của field (thường là "Day 1", "Day 2", ...)
+              const labelText = getFieldLabelText(comp);
+              const dayNo = parseDayNumber(labelText);
+              const enabled = (payload.enabledDays || []);
+
+              // Nếu người dùng bỏ chọn ngày này => bỏ qua card (không tick gì)
+              if (dayNo && enabled.length && !enabled.includes(dayNo)) {
+                console.log('[AF] Skip autofill for', labelText);
+                didAny = true;   // đánh dấu đã xử lý để còn Next
+                break;
+              }
+
+              // vẫn như cũ: gửi message tick vào iframe
               const frame = comp.querySelector('iframe');
               if (frame) {
                 const origin = (() => { try { return new URL(frame.src).origin; } catch { return '*'; } })();
                 const send = () => frame.contentWindow?.postMessage({ __af: true, kind: 'tickWidget', tokens }, origin);
-
                 if (frame.complete || frame.contentDocument?.readyState === 'complete') send();
                 else frame.addEventListener('load', send, { once: true });
 
-                // small retry window in case widget re-renders list
-                for (let i = 1; i <= 20; i++) setTimeout(send, i * 150);
+                chrome.runtime.sendMessage({ action: 'tickWidget', data: { checkboxTxtArr: [tokens] } });
               }
 
               didAny = true;
               break;
             }
+
 
 
 
@@ -755,7 +793,8 @@ if (IS_WIDGET) {
 
   // Receive tokens from extension (direct) or from top frame via postMessage
   chrome.runtime?.onMessage?.addListener?.((msg) => {
-    if (msg?.action === 'tickWidget' || msg?.action === 'startFilling') {
+    if (msg?.action === 'tickWidget') {
+      console.log('============', msg?.action)
       const tokens = (msg?.data?.checkboxTxtArr || []).flat();
       whenListReady(() => tickWidgetChecklist(tokens));
     }

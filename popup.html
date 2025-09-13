@@ -25,6 +25,8 @@
             margin-bottom: 20px;
             /* Thêm khoảng cách dưới thông báo */
         }
+
+        #days-grid label { display:inline-flex; align-items:center; gap:.35rem; margin:.15rem .5rem .15rem 0; }
     </style>
 </head>
 
@@ -64,6 +66,13 @@
             <button id="add-pair" class="btn btn-primary btn-sm mt-2">Add questions/answer</button>
         </div>
 
+        <div class="mt-3">
+            <label class="form-label fw-bold">Days to auto-fill</label>
+            <div id="days-grid" class="d-flex flex-wrap gap-2"></div>
+            <small class="text-muted">Un-check days you don't want to auto-fill.</small>
+        </div>
+
+
         <div class="value-list mb-3">
             <h6>Custom checkbox</h6>
             <div id="values-container"></div>
@@ -92,7 +101,7 @@
     </div>
 
     <footer>
-        <p>&copy; <span id="year"></span> <a href="https://FB.com/100004518225124" target="_blank">Tuan.VHIT</a>. All
+        <p>&copy; <span id="year"></span> DTKT.Corp All rights reserved.</p
             rights reserved.</p>
     </footer>
 
