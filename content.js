@@ -187,17 +187,17 @@ async function fillMaskedPhone(comp, phoneStr) {
     //   }
     // }
     // return false;
-      const nextBtn =
-        card.querySelector("button[data-testid^='nextButton_']") ||
-        card.querySelector("button.form-pagebreak-next");
+    const nextBtn =
+      card.querySelector("button[data-testid^='nextButton_']") ||
+      card.querySelector("button.form-pagebreak-next");
 
-      if (nextBtn) { nextBtn.click(); return 'next'; }
+    if (nextBtn) { nextBtn.click(); return 'next'; }
 
-      if (allowSubmit) {
-        const submit = card.querySelector("button[class*='form-submit-button']");
-        if (submit) { submit.click(); return 'submitted'; }
-      }
-      return null;
+    if (allowSubmit) {
+      const submit = card.querySelector("button[class*='form-submit-button']");
+      if (submit) { submit.click(); return 'submitted'; }
+    }
+    return null;
   }
 
   // Type a mask-number (phone) by simulating key presses (works with some masked inputs)
@@ -246,12 +246,12 @@ async function fillMaskedPhone(comp, phoneStr) {
             start.click();
             started = true;
           }
-        } catch {}
+        } catch { }
       } else {
         // one-time: if there is a phone mask field anywhere, preload digits (will also be handled per-card)
         try {
           qs("input[data-type='mask-number']").value = payload.phone || '';
-        } catch {}
+        } catch { }
       }
 
       const card = qs("div[class*='isVisible']");
@@ -292,8 +292,15 @@ async function fillMaskedPhone(comp, phoneStr) {
 
             case 'input-textbox': {
               // grab label text to match from mapping
+              const input = comp; // the <input data-type="input-textbox">
               const label =
-                comp.parentElement?.parentElement?.querySelector('label')?.innerText || '';
+                input.labels?.[0]?.querySelector('.jsQuestionLabelContainer')?.textContent?.trim() ||
+                document.getElementById(input.getAttribute('aria-labelledby'))?.querySelector('.jsQuestionLabelContainer')?.textContent?.trim() ||
+                document.querySelector(`label[for="${CSS.escape(input.id)}"] .jsQuestionLabelContainer`)?.textContent?.trim() ||
+                '';
+
+              // const label =
+              //   comp.parentElement?.parentElement?.querySelector('label')?.innerText || '';
               const mapped = findMappedValue(inputTxtArr, label);
               if (mapped) {
                 const input = comp;
