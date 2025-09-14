@@ -311,6 +311,57 @@ function waitForWidgetIframeInComp(comp, { appearTimeout = 4000, loadTimeout = 4
 }
 
 // Parent → Iframe: handshake + select
+// async function selectWidgetOptionsInCard(card, tokens = [], timeout = 4000) {
+//   const comps = getWidgetComponents(card);
+//   if (!comps.length || !tokens?.length) return false;
+
+//   let changed = false;
+
+//   for (const comp of comps) {
+//     const iframe = await waitForWidgetIframeInComp(comp, { appearTimeout: 1500, loadTimeout: 1500 });
+//     if (!iframe) continue;
+
+//     const win = iframe.contentWindow;
+//     const origin = iframe.src ? new URL(iframe.src).origin : "*";
+
+//     let done = false;
+//     const start = Date.now();
+
+//     const cleanup = () => window.removeEventListener("message", onMsg);
+
+//     const onMsg = (ev) => {
+//       if (ev.source !== win) return;
+//       const data = ev.data || {};
+
+//       if (data.type === "JF_WIDGET_PONG") {
+//         // iframe ready → gửi select ngay
+//         win.postMessage({ type: "JF_WIDGET_SELECT", tokens }, origin);
+//       }
+//       if (data.type === "JF_WIDGET_SELECTED") {
+//         changed = changed || !!data.changed;
+//         done = true;
+//         cleanup();
+//       }
+//     };
+
+//     window.addEventListener("message", onMsg);
+
+//     // gửi ping ngay
+//     win.postMessage({ type: "JF_WIDGET_PING" }, origin);
+
+//     // chờ ACK, fallback retry 1–2 lần thay vì spam
+//     while (!done && Date.now() - start < timeout) {
+//       await delay(300);
+//       if (!done) win.postMessage({ type: "JF_WIDGET_PING" }, origin);
+//     }
+
+//     cleanup();
+//   }
+
+//   return changed;
+// }
+
+// Parent → Iframe: handshake + select (SỬA: thêm { single: true })
 async function selectWidgetOptionsInCard(card, tokens = [], timeout = 4000) {
   const comps = getWidgetComponents(card);
   if (!comps.length || !tokens?.length) return false;
@@ -328,14 +379,13 @@ async function selectWidgetOptionsInCard(card, tokens = [], timeout = 4000) {
     const start = Date.now();
 
     const cleanup = () => window.removeEventListener("message", onMsg);
-
     const onMsg = (ev) => {
       if (ev.source !== win) return;
       const data = ev.data || {};
 
       if (data.type === "JF_WIDGET_PONG") {
-        // iframe ready → gửi select ngay
-        win.postMessage({ type: "JF_WIDGET_SELECT", tokens }, origin);
+        // gửi lựa chọn với single mode
+        win.postMessage({ type: "JF_WIDGET_SELECT", tokens, single: true }, origin);
       }
       if (data.type === "JF_WIDGET_SELECTED") {
         changed = changed || !!data.changed;
@@ -343,23 +393,22 @@ async function selectWidgetOptionsInCard(card, tokens = [], timeout = 4000) {
         cleanup();
       }
     };
-
     window.addEventListener("message", onMsg);
 
-    // gửi ping ngay
+    // ping
     win.postMessage({ type: "JF_WIDGET_PING" }, origin);
 
-    // chờ ACK, fallback retry 1–2 lần thay vì spam
+    // chờ ACK
     while (!done && Date.now() - start < timeout) {
       await delay(300);
       if (!done) win.postMessage({ type: "JF_WIDGET_PING" }, origin);
     }
-
     cleanup();
   }
 
   return changed;
 }
+
 
 
 /* ===== Widget (iframe) logic ===== */
@@ -413,6 +462,49 @@ function clickWidgetByTokens(tokens = [], root = document) {
   }
   return changed;
 }
+
+// NEW: chọn đúng 1 option theo thứ tự tokens
+function clickWidgetFirstAvailable(tokens = [], root = document) {
+  const list = root.querySelector('#gr_list, #checklist, ul.checklist');
+  if (!list) return { changed: false, picked: null };
+
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const wanted = (tokens || []).map(norm).filter(Boolean);
+
+  // build danh sách option
+  const labels = Array.from(list.querySelectorAll('label.checkbox'));
+  const options = labels.map(lab => {
+    const text = norm(lab.textContent);
+    const forId = norm(lab.getAttribute('for'));
+    const input = forId ? document.getElementById(forId) : null;
+    return { lab, text, forId, input };
+  });
+
+  for (const tok of wanted) {
+    // tìm những option match token này
+    const matches = options.filter(o => o.text.includes(tok) || (o.forId && o.forId === tok));
+    for (const o of matches) {
+      // bỏ qua item hết hàng/disabled/đã checked
+      if (isWidgetLabelDisabled(o.lab)) continue;
+      if (o.input && (o.input.disabled || o.input.checked)) continue;
+
+      // click
+      const target = o.input || o.lab;
+      target.scrollIntoView({ block: 'center' });
+      dispatchMouseSeq(o.lab);
+      if (o.input) {
+        dispatchMouseSeq(o.input);
+        if (!o.input.checked) o.input.checked = true;
+        o.input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return { changed: true, picked: tok };
+    }
+    // không có option nào phù hợp/available cho token này → thử token tiếp
+  }
+
+  return { changed: false, picked: null };
+}
+
 if (IS_IFRAME && !window.__JF_IFRAME_READY__) {
   window.__JF_IFRAME_READY__ = true;
   window.addEventListener('message', async (ev) => {
@@ -423,9 +515,18 @@ if (IS_IFRAME && !window.__JF_IFRAME_READY__) {
     }
     if (data.type !== 'JF_WIDGET_SELECT') return;
     await waitWidgetReady(5000);
-    const changed = clickWidgetByTokens(data.tokens || [], document);
+
+    let result = { changed: false, picked: null };
+    if (data.single) {
+      result = clickWidgetFirstAvailable(data.tokens || [], document);
+    } else {
+      // fallback cũ: tick tất (nếu cần)
+      const changed = clickWidgetByTokens(data.tokens || [], document);
+      result = { changed, picked: null };
+    }
+
     document.dispatchEvent(new Event('change', { bubbles: true }));
-    ev.source.postMessage({ type: 'JF_WIDGET_SELECTED', changed }, ev.origin || "*");
+    ev.source.postMessage({ type: 'JF_WIDGET_SELECTED', changed: !!result.changed, picked: result.picked }, ev.origin || "*");
   }, false);
 }
 
