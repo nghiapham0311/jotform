@@ -22,17 +22,24 @@
         "storage",
         "scripting"
     ],
+    "host_permissions": [
+        "https://form.jotform.com/*",
+        "https://app-widgets.jotform.io/*"
+    ],
     "background": {
         "service_worker": "background.js"
     },
     "content_scripts": [
         {
             "matches": [
-                "<all_urls>"
+                "https://form.jotform.com/*",
+                "https://app-widgets.jotform.io/*"
             ],
             "js": [
                 "content.js"
-            ]
+            ],
+            "run_at": "document_idle",
+            "all_frames": true
         }
     ]
 }

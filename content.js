@@ -1,85 +1,67 @@
-// content.js
+/* =========================
+   Small utils
+========================= */
+const qs = (sel, root = document) => root.querySelector(sel);
+const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const delay = (ms) => new Promise(r => setTimeout(r, ms));
 
-// Extract only digits from input string
-function digitsOnly(s) {
-  return String(s || '').replace(/\D+/g, '');
+function isVisible(el) {
+  if (!el) return false;
+  const cs = getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+  if ((el.offsetWidth | 0) === 0 && (el.offsetHeight | 0) === 0 && el.getClientRects().length === 0) return false;
+  return true;
+}
+function isDisabledBtn(btn) {
+  if (!btn) return true;
+  if (btn.disabled || btn.matches?.(':disabled')) return true;
+  const aria = btn.getAttribute('aria-disabled');
+  if (aria && aria !== 'false') return true;
+  const cls = btn.className || '';
+  if (/\bdisabled\b/i.test(cls) || /\bisDisabled\b/.test(cls)) return true;
+  return getComputedStyle(btn).pointerEvents === 'none';
 }
 
-// Format "digits" into a visual mask "(###) ###-####" / "____-___" etc.
+/* =========================
+   Phone helpers
+========================= */
+function digitsOnly(s) { return String(s || '').replace(/\D+/g, ''); }
 function applyMaskFromPattern(mask, digits) {
-  // treat _, #, 9 as placeholders for digits
   const placeholders = new Set(['_', '#', '9']);
-  let out = '';
-  let i = 0;
-  for (const ch of mask) {
-    if (placeholders.has(ch)) {
-      if (i < digits.length) out += digits[i++];
-      else out += ''; // or keep placeholder if you want to show, but validator hates it
-    } else {
-      out += ch;
-    }
-  }
+  let out = '', i = 0;
+  for (const ch of mask) out += placeholders.has(ch) ? (digits[i++] || '') : ch;
   return out;
 }
-
-// Fire a "realistic" sequence of events so JotForm validators run
 function setValueWithEvents(el, val) {
   el.focus();
-  // clear old value in a way frameworks detect
   el.setSelectionRange(0, (el.value || '').length);
   el.setRangeText('', 0, (el.value || '').length, 'end');
   el.dispatchEvent(new Event('input', { bubbles: true }));
-
-  // set the formatted value
   el.value = val;
   el.setSelectionRange(val.length, val.length);
-
-  // notify listeners
-  el.dispatchEvent(new InputEvent('input', {
-    bubbles: true,
-    cancelable: true,
-    inputType: 'insertFromPaste',
-    data: val
-  }));
+  el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertFromPaste', data: val }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
   el.blur();
 }
-
-// Fill a JotForm masked phone input (covers single field, multi-part, intl-tel-input)
 async function fillMaskedPhone(comp, phoneStr) {
   const digits = digitsOnly(phoneStr);
   if (!digits) return false;
 
-  // (A) The exact single full field (your screenshot): id like input_*_full, data-type=mask-number
+  // (A) single masked input
   let el = comp.querySelector("input[id$='_full'][data-type='mask-number'], input.mask-phone-number, input.forPhone");
   if (el) {
     const mask = el.getAttribute('maskvalue') || el.getAttribute('data-maskvalue') || '(###) ###-####';
-    // how many digits are required by the mask
     const need = (mask.match(/[_#9]/g) || []).length;
-    if (digits.length < need) {
-      // not enough digits → don't set (will fail validation)
-      return false;
-    }
-    const formatted = applyMaskFromPattern(mask, digits);
-    setValueWithEvents(el, formatted);
+    if (digits.length < need) return false;
+    setValueWithEvents(el, applyMaskFromPattern(mask, digits));
     return true;
   }
-
-  // (B) intl-tel-input variant
+  // (B) intl-tel-input
   el = comp.querySelector('.iti .iti__tel-input, .iti input[type="tel"]');
-  if (el) {
-    setValueWithEvents(el, digits); // plugin formats visually
-    return true;
-  }
-
-  // (C) Two/three-part phones (area + number, etc.)
-  const parts = Array.from(
-    comp.querySelectorAll(
-      "input[data-component='area'], input[data-component='phone'], input[type='tel'][name*='area' i], input[type='tel'][name*='phone' i]"
-    )
-  );
+  if (el) { setValueWithEvents(el, digits); return true; }
+  // (C) multi-part
+  const parts = qsa("input[data-component='area'], input[data-component='phone'], input[type='tel'][name*='area' i], input[type='tel'][name*='phone' i]", comp);
   if (parts.length >= 2) {
-    // guess lengths
     const a = parts[0], b = parts[1], c = parts[2];
     const la = a.maxLength || 3, lb = b.maxLength || (c ? 3 : digits.length - la), lc = c?.maxLength || 4;
     setValueWithEvents(a, digits.slice(0, la));
@@ -87,28 +69,20 @@ async function fillMaskedPhone(comp, phoneStr) {
     if (c) setValueWithEvents(c, digits.slice(la + lb, la + lb + lc));
     return true;
   }
-
-  // (D) Fallback: a single <input type="tel">
+  // (D) fallback
   el = comp.querySelector("input[type='tel']");
-  if (el) {
-    setValueWithEvents(el, digits);
-    return true;
-  }
-
+  if (el) { setValueWithEvents(el, digits); return true; }
   return false;
 }
 
-// Return normalized label text for a field container (works with label + span + aria-labelledby)
+/* =========================
+   Labels & radios
+========================= */
 function getFieldLabelText(comp) {
   const input = comp.querySelector('input, textarea, select');
   const ariaIds = (input?.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
-  let pieces = [];
-  for (const id of ariaIds) {
-    const el = document.getElementById(id);
-    if (el) pieces.push(el.innerText || el.textContent || '');
-  }
+  const pieces = ariaIds.map(id => (document.getElementById(id)?.innerText || document.getElementById(id)?.textContent || ''));
   let text = pieces.join(' ').trim();
-
   if (!text) {
     const container = comp.closest("li[id^='id_'], [data-type]") || comp;
     const labelEl =
@@ -117,23 +91,14 @@ function getFieldLabelText(comp) {
       container.querySelector('label');
     if (labelEl) text = (labelEl.innerText || labelEl.textContent || '').trim();
   }
-
-  return text
-    .replace(/\*\s*$/, '')                              // trailing required star
-    .replace(/\bThis field is required\.?$/i, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return text.replace(/\*\s*$/, '').replace(/\bThis field is required\.?$/i, '').replace(/\s+/g, ' ').trim();
 }
-
-// Decide whether a radio group looks like a consent/agree question
 function isConsentGroup(labelText) {
   const s = (labelText || '').toLowerCase();
   return /\bagree|agreed|accept|consent|terms|policy|privacy|understand\b/.test(s);
 }
-
-// Collect radio options with their visible text
 function getRadioOptions(comp) {
-  return Array.from(comp.querySelectorAll("input[type='radio']")).map(input => {
+  return qsa("input[type='radio']", comp).map(input => {
     let txt = '';
     const wrap = input.closest('label');
     if (wrap) {
@@ -147,424 +112,271 @@ function getRadioOptions(comp) {
     return { input, text: txt, value: (input.value || '').trim() };
   });
 }
-
-// Pick an option matching tokens or consent synonyms
 function selectRadioAgree(comp, tokens = []) {
   const opts = getRadioOptions(comp);
   if (!opts.length) return false;
-
   const tks = (tokens || []).map(t => String(t).toLowerCase()).filter(Boolean);
-  const synonyms = ['agree','i agree','accept','i accept','consent','yes','ok','okay','i understand'];
-
-  const match = (o) => {
-    const tx = o.text.toLowerCase();
-    const vv = o.value.toLowerCase();
+  const synonyms = ['agree', 'i agree', 'accept', 'i accept', 'consent', 'yes', 'ok', 'okay', 'i understand'];
+  const hit = opts.find(o => {
+    const tx = o.text.toLowerCase(), vv = o.value.toLowerCase();
     return (tks.length && tks.some(t => tx.includes(t) || vv.includes(t))) ||
-           synonyms.some(t => tx.includes(t) || vv.includes(t));
-  };
-
-  const pick = opts.find(match) || null;
-  if (!pick) return false;
-
-  if (!pick.input.checked) {
-    pick.input.click();                           // let JotForm handle checked state
-    pick.input.dispatchEvent(new Event('change', { bubbles: true }));
+      synonyms.some(t => tx.includes(t) || vv.includes(t));
+  });
+  if (!hit) return false;
+  if (!hit.input.checked) {
+    hit.input.click();
+    hit.input.dispatchEvent(new Event('change', { bubbles: true }));
   }
   return true;
 }
-
-// Return true if at least one consent/agree control was toggled
 function tryAgreeToggles(card) {
-  // Collect all radios/checkboxes inside the visible card
-  const inputs = Array.from(
-    card.querySelectorAll("input[type='checkbox'], input[type='radio']")
-  );
-
-  // Build a label text for an input: its own label text + group label text
+  const inputs = qsa("input[type='checkbox'], input[type='radio']", card);
   const getLabelText = (el) => {
     const byFor = el.id ? card.querySelector(`label[for='${el.id}']`) : null;
-    const wrap  = el.closest('label');
-    const own   = (wrap?.innerText || byFor?.innerText || '').trim();
-
-    // Group/question label (e.g. <label id="label_9"> ... <span>...text...</span>)
-    const groupLabel =
-      card.querySelector('.jfQuestion-label, .jf-question-label, [id^="label_"]');
-    const group = (groupLabel?.innerText || '').trim();
-
+    const wrap = el.closest('label');
+    const own = (wrap?.innerText || byFor?.innerText || '').trim();
+    const group = (card.querySelector('.jfQuestion-label, .jf-question-label, [id^="label_"]')?.innerText || '').trim();
     return `${own} ${group}`.toLowerCase();
   };
-
-  // Keywords that indicate consent/agree options
-  const agreeTokens = [
-    'agree','i agree','agreed',
-    'accept','i accept',
-    'consent',
-    'yes','ok','okay',
-    'i understand','understand',
-    'terms','policy','privacy'
-  ];
-
+  const agreeTokens = ['agree', 'i agree', 'agreed', 'accept', 'i accept', 'consent', 'yes', 'ok', 'okay', 'i understand', 'understand', 'terms', 'policy', 'privacy'];
   let changed = false;
-
   for (const el of inputs) {
     const txt = getLabelText(el);
-    if (agreeTokens.some(t => txt.includes(t))) {
-      if (!el.checked) {
-        el.click(); // let JotForm handle state/validation
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        changed = true;
-      }
+    if (agreeTokens.some(t => txt.includes(t)) && !el.checked) {
+      el.click();
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      changed = true;
     }
   }
-
   return changed;
 }
 
-function isVisible(el) {
+/* =========================
+   Widget helpers (giftRegistry / checklist)
+   → dùng checkboxTxtArr để match theo text HOẶC id (for="option-x")
+========================= */
+function widgetOptions(root = document) {
+  const list = root.querySelector('#gr_list, #checklist, ul.checklist');
+  if (!list) return [];
+  return [...list.querySelectorAll('label.checkbox')].map(lab => ({
+    labelEl: lab,
+    text: (lab.textContent || '').trim(),
+    forId: lab.getAttribute('for') || ''
+  }));
+}
+function clickWidgetByTokens(tokens = [], root = document) {
+  const opts = widgetOptions(root);
+  if (!opts.length) return false;
+  const wanted = (tokens || []).map(s => String(s).toLowerCase()).filter(Boolean);
+  let changed = false;
+
+  for (const o of opts) {
+    const txt = o.text.toLowerCase();
+    const byText = wanted.some(w => txt.includes(w));
+    const byId = wanted.includes(o.forId.toLowerCase());
+    if (byText || byId) { o.labelEl.click(); changed = true; }
+  }
+  return changed;
+}
+
+/* =========================
+   Per-field fillers & navigation
+========================= */
+function fillInto(componentRoot, partName, value) {
+  if (!value) return false;
+  const el = qs(`input[data-component='${partName}']`, componentRoot);
   if (!el) return false;
-  const cs = getComputedStyle(el);
-  if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
-  if ((el.offsetWidth|0) === 0 && (el.offsetHeight|0) === 0 && el.getClientRects().length === 0) return false;
+  el.value = value;
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  el.dispatchEvent(new Event('input', { bubbles: true }));
   return true;
 }
-
-function isDisabledBtn(btn) {
-  if (!btn) return true;
-  if (btn.disabled === true) return true;
-  if (btn.matches?.(':disabled')) return true;
-  const aria = btn.getAttribute('aria-disabled');
-  if (aria && aria !== 'false') return true;
-  const cls = btn.className || '';
-  if (/\bdisabled\b/i.test(cls) || /\bisDisabled\b/.test(cls)) return true;
-  const cs = getComputedStyle(btn);
-  if (cs.pointerEvents === 'none') return true;
-  return false;
-}
-
-//===============================================
-
-(function () {
-  // helpers
-  const qs = (sel, root = document) => root.querySelector(sel);
-  const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-
-  function delay(ms) {
-    return new Promise(r => setTimeout(r, ms));
-  }
-
-  function fillInto(componentRoot, partName, value) {
-    if (!value) return false;
-    const el = qs(`input[data-component='${partName}']`, componentRoot);
-    if (!el) return false;
-    el.value = value;
-    // fire change/input so JotForm reacts
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    el.dispatchEvent(new Event('input', { bubbles: true }));
+function setLiteDate(fieldId, year, month, day) {
+  try {
+    if (month < 10) month = `0${month}`;
+    if (day < 10) day = `0${day}`;
+    const field = qs(`#lite_mode_${fieldId}`);
+    const sep = field.getAttribute('data-seperator') || field.getAttribute('seperator') || '/';
+    const fmt = field.getAttribute('data-format') || field.getAttribute('format') || 'mmddyyyy';
+    let text = `${month}${sep}${day}${sep}${year}`;
+    if (fmt === 'ddmmyyyy') text = `${day}${sep}${month}${sep}${year}`;
+    if (fmt === 'yyyymmdd') text = `${year}${sep}${month}${sep}${day}`;
+    field.value = text;
+    const iso = qs(`#input_${fieldId}`);
+    if (iso) iso.value = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const ev = document.createEvent('HTMLEvents');
+    ev.initEvent('dataavailable', true, true);
+    ev.eventName = 'date:changed';
+    qs(`#id_${fieldId}`).dispatchEvent(ev);
     return true;
-  }
-
-  // Set a JotForm "liteDate" control value respecting its data-format / separator
-  function setLiteDate(fieldId, year, month, day) {
-    try {
-      // pad
-      if (month < 10) month = `0${month}`;
-      if (day < 10) day = `0${day}`;
-
-      const field = qs(`#lite_mode_${fieldId}`);
-      const sep = field.getAttribute('data-seperator') || field.getAttribute('seperator') || '/';
-      const fmt = field.getAttribute('data-format') || field.getAttribute('format') || 'mmddyyyy';
-
-      let text = `${month}${sep}${day}${sep}${year}`;
-      if (fmt === 'ddmmyyyy') text = `${day}${sep}${month}${sep}${year}`;
-      if (fmt === 'yyyymmdd') text = `${year}${sep}${month}${sep}${day}`;
-      if (fmt === 'mmddyyyy') text = `${month}${sep}${day}${sep}${year}`;
-
-      field.value = text;
-
-      // If the companion #input_<id> exists, set it in yyyy-mm-dd
-      const iso = qs(`#input_${fieldId}`);
-      if (iso) {
-        iso.value = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      }
-
-      // notify jotform
-      const ev = document.createEvent('HTMLEvents');
-      ev.initEvent('dataavailable', true, true);
-      ev.eventName = 'date:changed';
-      qs(`#id_${fieldId}`).dispatchEvent(ev);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  // Choose option text from provided mapping that matches the field's label text
-  function findMappedValue(mappingList, labelText) {
-    const needle = (labelText || '').toLowerCase();
-    const hit = mappingList.filter(m =>
-      (m.text || []).some(t => needle.includes(String(t).toLowerCase()))
-    );
-    return hit.length ? hit[0].value : null;
-  }
-
-  // For checkbox groups: does the candidate value contain any of allowed tokens?
-  function containsAny(allowedGroups, value) {
-    const v = (value || '').toLowerCase();
-    return allowedGroups.some(group =>
-      group.some(token => v.includes(String(token).toLowerCase()))
-    );
-  }
-
-  // Click the "Next" button on card forms, or submit when allowed
-  function clickNextOrSubmit(card, allowSubmit) {
-    // const nextBtn = qs(`button[data-testid^='nextButton_']`, card);
-    // if (nextBtn && nextBtn.checkVisibility()) {
-    //   nextBtn.click();
-    //   return true;
-    // }
-    // if (allowSubmit) {
-    //   const submit = qs(`button[class*='form-submit-button']`, card);
-    //   if (submit && submit.checkVisibility()) {
-    //     submit.click();
-    //     return true;
-    //   }
-    // }
-    // return false;
-
-    //===============
-    // const nextBtn =
-    //   card.querySelector("button[data-testid^='nextButton_']") ||
-    //   card.querySelector("button.form-pagebreak-next");
-
-    // if (nextBtn) { nextBtn.click(); return 'next'; }
-
-    // if (allowSubmit) {
-    //   const submit = card.querySelector("button[class*='form-submit-button']");
-    //   if (submit) { submit.click(); return 'submitted'; }
-    // }
-    // return null;
-    //===============
-
-    const nextBtn =
+  } catch { return false; }
+}
+function containsAny(allowedGroups, value) {
+  const v = (value || '').toLowerCase();
+  return allowedGroups.some(group => group.some(token => v.includes(String(token).toLowerCase())));
+}
+function clickNextOrSubmit(card, allowSubmit) {
+  const nextBtn =
     card.querySelector("button[data-testid^='nextButton_']") ||
     card.querySelector("button.form-pagebreak-next") ||
     card.querySelector("button[name='next']");
+  if (nextBtn && isVisible(nextBtn)) {
+    if (isDisabledBtn(nextBtn)) {
+      tryAgreeToggles(card);
+      if (isDisabledBtn(nextBtn)) return null;
+    }
+    nextBtn.scrollIntoView({ block: 'center' });
+    nextBtn.click();
+    return 'next';
+  }
+  if (allowSubmit) {
+    const submit =
+      card.querySelector("button[class*='form-submit-button']") ||
+      document.querySelector("button[class*='form-submit-button']");
+    if (submit && isVisible(submit) && !isDisabledBtn(submit)) {
+      submit.scrollIntoView({ block: 'center' });
+      submit.click();
+      return 'submitted';
+    }
+  }
+  return null;
+}
 
-    if (nextBtn && isVisible(nextBtn)) {
-      // If Next is disabled, try to enable by ticking agree/consent controls
-      if (isDisabledBtn(nextBtn)) {
-        const toggled = tryAgreeToggles(card); // ← new
-        // Outer loop will wait a tick; just re-check now
-        if (isDisabledBtn(nextBtn)) return null;
-      }
+/* =========================
+   Main loop (top frame)
+========================= */
+async function mainLoop(payload) {
+  const delayTime = Number(payload.delayTime) || 250;
+  const allowSubmit = !!payload.submitForm;
+  const year = Number(payload.year);
+  const month = Number(payload.month);
+  const day = Number(payload.day);
 
-      nextBtn.scrollIntoView({ block: 'center' });
-      nextBtn.click();
-      return 'next';
+  const inputTxtArr = Array.isArray(payload.inputTxtArr) ? payload.inputTxtArr : [];
+  const checkboxTxtArr = Array.isArray(payload.checkboxTxtArr) ? payload.checkboxTxtArr : [];
+
+  let started = false;
+  let lastCardId = '';
+
+  while (window.isFilling) {
+    await delay(delayTime);
+
+    if (!started) {
+      const start = qs("[id='jfCard-welcome-start']");
+      if (start?.checkVisibility?.() || isVisible(start)) { start.click(); started = true; }
+    } else {
+      try { qs("input[data-type='mask-number']").value = payload.phone || ''; } catch { }
     }
 
-    // Submit (last card)
-    if (allowSubmit) {
-      const submit =
-        card.querySelector("button[class*='form-submit-button']") ||
-        document.querySelector("button[class*='form-submit-button']");
-      if (submit && isVisible(submit) && !isDisabledBtn(submit)) {
-        submit.scrollIntoView({ block: 'center' });
-        submit.click();
-        return 'submitted';
-      }
+    const card = qs("div[class*='isVisible']");
+    if (!card) continue;
+
+    const cardId = card.getAttribute('id') || '';
+    if (cardId === lastCardId) {
+      if (clickNextOrSubmit(card, allowSubmit)) return;
+      continue;
     }
+    lastCardId = cardId;
 
-    return null;
-  }
+    const fieldId = (card.getAttribute('id') || '').replace('cid_', '');
+    let didAny = false;
 
-  // Type a mask-number (phone) by simulating key presses (works with some masked inputs)
-  function typeMasked(el, digits = '') {
-    const fireKey = (key) => {
-      const payload = {
-        code: key === ' ' ? 'Space' : key.toUpperCase(),
-        key,
-        keyCode: key.charCodeAt(0),
-        which: key.charCodeAt(0),
-        bubbles: true,
-      };
-      el.dispatchEvent(new KeyboardEvent('keydown', payload));
-      el.dispatchEvent(new KeyboardEvent('keyup', payload));
-      ['change', 'input'].forEach(t => el.dispatchEvent(new Event(t, { bubbles: true })));
-    };
-    digits.split('').forEach(fireKey);
-  }
+    const components = qsa('[data-type]', card);
+    if (components.length === 0) {
+      didAny = true;
+    } else {
+      for (const comp of components) {
+        const type = comp.getAttribute('data-type');
+        switch (type) {
+          case 'first': didAny = fillInto(comp, 'first', payload.firstName) || didAny; break;
+          case 'last': didAny = fillInto(comp, 'last', payload.lastName) || didAny; break;
+          case 'email': didAny = fillInto(comp, 'email', payload.email) || didAny; break;
+          case 'liteDate': didAny = setLiteDate(fieldId, year, month, day) || didAny; break;
 
-  async function mainLoop(payload) {
-    // payload from popup
-    const delayTime = Number(payload.delayTime) || 250;
-    const allowSubmit = !!payload.submitForm;
-
-    const year = Number(payload.year);
-    const month = Number(payload.month);
-    const day = Number(payload.day);
-
-    // text mappings: [{ value: "Universidad", text: ["Drivers Licence1","ID Number1"] }, ...]
-    const inputTxtArr = Array.isArray(payload.inputTxtArr) ? payload.inputTxtArr : [];
-
-    // checkbox matching buckets: [["Drivers Licence","ID Number"], ["..."]]
-    const checkboxTxtArr = Array.isArray(payload.checkboxTxtArr) ? payload.checkboxTxtArr : [];
-
-    let started = false;
-    let lastCardId = '';
-
-    while (window.isFilling) {
-      await delay(delayTime);
-
-      // click "Start" welcome card once
-      if (!started) {
-        try {
-          const start = qs("[id='jfCard-welcome-start']");
-          if (start?.checkVisibility()) {
-            start.click();
-            started = true;
+          case 'input-textbox': {
+            const input = comp;
+            const label =
+              input.labels?.[0]?.querySelector('.jsQuestionLabelContainer')?.textContent?.trim() ||
+              document.getElementById(input.getAttribute('aria-labelledby'))?.querySelector('.jsQuestionLabelContainer')?.textContent?.trim() ||
+              document.querySelector(`label[for="${CSS.escape(input.id)}"] .jsQuestionLabelContainer`)?.textContent?.trim() || '';
+            const mapped = inputTxtArr.find(m => (m.text || []).some(t => (label || '').toLowerCase().includes(String(t).toLowerCase())));
+            if (mapped) {
+              input.value = mapped.value;
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+              didAny = true;
+            }
+            break;
           }
-        } catch { }
-      } else {
-        // one-time: if there is a phone mask field anywhere, preload digits (will also be handled per-card)
-        try {
-          qs("input[data-type='mask-number']").value = payload.phone || '';
-        } catch { }
-      }
 
-      const card = qs("div[class*='isVisible']");
-      if (!card) continue;
-
-      const cardId = card.getAttribute('id') || '';
-      if (cardId === lastCardId) {
-        if (clickNextOrSubmit(card, allowSubmit)) return;
-        continue;
-      }
-      lastCardId = cardId;
-
-      const fieldId = (card.getAttribute('id') || '').replace('cid_', '');
-      let didAny = false;
-
-      const components = qsa('[data-type]', card);
-      if (components.length === 0) {
-        didAny = true; // empty card, try to advance
-      } else {
-        for (const comp of components) {
-          const type = comp.getAttribute('data-type');
-          switch (type) {
-            case 'first':
-              didAny = fillInto(comp, 'first', payload.firstName) || didAny;
-              break;
-
-            case 'last':
-              didAny = fillInto(comp, 'last', payload.lastName) || didAny;
-              break;
-
-            case 'email':
-              didAny = fillInto(comp, 'email', payload.email) || didAny;
-              break;
-
-            case 'liteDate':
-              didAny = setLiteDate(fieldId, year, month, day) || didAny;
-              break;
-
-            case 'input-textbox': {
-              // grab label text to match from mapping
-              const input = comp; // the <input data-type="input-textbox">
-              const label =
-                input.labels?.[0]?.querySelector('.jsQuestionLabelContainer')?.textContent?.trim() ||
-                document.getElementById(input.getAttribute('aria-labelledby'))?.querySelector('.jsQuestionLabelContainer')?.textContent?.trim() ||
-                document.querySelector(`label[for="${CSS.escape(input.id)}"] .jsQuestionLabelContainer`)?.textContent?.trim() ||
-                '';
-
-              // const label =
-              //   comp.parentElement?.parentElement?.querySelector('label')?.innerText || '';
-              const mapped = findMappedValue(inputTxtArr, label);
-              if (mapped) {
-                const input = comp;
-                input.value = mapped;
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                didAny = true;
+          case 'control_checkbox': {
+            const boxes = qsa("input[type='checkbox']", comp);
+            if (boxes.length === 1) {
+              boxes[0].checked = true; didAny = true;
+            } else {
+              for (const box of boxes) {
+                if (box.value && containsAny(checkboxTxtArr, box.value)) box.checked = true;
               }
-              break;
+              didAny = true;
             }
-
-            case 'control_checkbox': {
-              const boxes = qsa("input[type='checkbox']", comp);
-              if (boxes.length === 1) {
-                boxes[0].checked = true;
-                didAny = true;
-              } else {
-                for (const box of boxes) {
-                  if (box.value && containsAny(checkboxTxtArr, box.value)) {
-                    box.checked = true;
-                  }
-                }
-                didAny = true;
-              }
-              break;
-            }
-
-            // case 'mask-number': {
-            //   // feed phone digits key-by-key to satisfy masks
-            //   const digits = String(payload.phone || '').split('');
-            //   for (const ch of digits) typeMasked(comp, ch);
-            //   didAny = true;
-            //   break;
-            // }
-            case 'mask-number': {
-              const ok = await fillMaskedPhone(comp, payload.phone);
-              didAny = ok || didAny;
-              break;
-            }
-
-            case 'control_phone': { // outer container sometimes reports this type
-              const ok = await fillMaskedPhone(comp, payload.phone);
-              didAny = ok || didAny;
-              break;
-            }
-
-            case 'control_radio': {
-              const labelText = getFieldLabelText(comp);
-              // Flatten your custom checkbox tokens so they can also drive radio selection
-              const customTokens = (payload.checkboxTxtArr || []).flat();
-
-              // Only auto-select if this looks like a consent group OR tokens match the group label
-              const shouldAuto =
-                isConsentGroup(labelText) ||
-                (customTokens.length && customTokens.some(t => labelText.toLowerCase().includes(String(t).toLowerCase())));
-
-              if (shouldAuto) {
-                const ok = selectRadioAgree(comp, customTokens);
-                didAny = ok || didAny;
-              }
-              break;
-            }
-
-            default:
-              // ignore the rest
-              break;
+            break;
           }
+
+          case 'mask-number':
+          case 'control_phone': {
+            const ok = await fillMaskedPhone(comp, payload.phone);
+            didAny = ok || didAny;
+            break;
+          }
+
+          case 'control_radio': {
+            const labelText = getFieldLabelText(comp);
+            const tokens = (checkboxTxtArr || []).flat(); // reuse user tokens
+            const shouldAuto = isConsentGroup(labelText) ||
+              (tokens.length && tokens.some(t => labelText.toLowerCase().includes(String(t).toLowerCase())));
+            if (shouldAuto) {
+              const ok = selectRadioAgree(comp, tokens);
+              didAny = ok || didAny;
+            }
+            break;
+          }
+
+          default: break;
         }
       }
-
-      // advance the card form
-      // if (clickNextOrSubmit(card, allowSubmit)) return;
-      const action = clickNextOrSubmit(card, allowSubmit);
-      if (action === 'next') { await delay(delayTime); continue; }
-      if (action === 'submitted') { window.isFilling = false; break; }
     }
+
+    await delay(100); // cho iframe widget trong card kịp render
+    const action = clickNextOrSubmit(card, allowSubmit);
+    if (action === 'next') { await delay(delayTime); continue; }
+    if (action === 'submitted') { window.isFilling = false; break; }
+  }
+}
+
+/* =========================
+   Entry point
+   - Top frame: mainLoop
+   - Widget iframe: chọn option dựa trên checkboxTxtArr
+========================= */
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.action !== 'startFilling') return;
+  const data = message.data;
+  window.isFilling = true;
+
+  if (location.host === 'form.jotform.com') {
+    mainLoop(data);
+    return;
   }
 
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message.action !== 'startFilling') return;
-    const data = message.data;
-
-    window.isFilling = true;
-
-    // only act on JotForm
-    if (location.host === 'form.jotform.com') {
-      mainLoop(data);
+  // Iframe widget (giftRegistry/checklist)
+  if (location.host.endsWith('jotform.io')) {
+    try {
+      const tokens = Array.isArray(data.checkboxTxtArr) ? data.checkboxTxtArr.flat() : [];
+      if (tokens.length) {
+        const did = clickWidgetByTokens(tokens, document);
+        if (did) document.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    } catch (e) {
+      // ignore
     }
-  });
-})();
+  }
+});
