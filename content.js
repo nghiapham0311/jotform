@@ -245,6 +245,70 @@ function clickNextOrSubmit(card, allowSubmit) {
 /* =========================
    Main loop (top frame)
 ========================= */
+function hasValidationErrors() {
+  return !!(
+    document.querySelector('#cardProgress .jfProgress-item.hasError') ||
+    document.querySelector('.form-button-error') ||
+    document.querySelector('.jfCard-actionsNotification .form-error-message') ||
+    document.querySelector('li.form-line-error, .form-validation-error, [aria-invalid="true"]')
+  );
+}
+
+
+async function handleProgressErrors(resolver) {
+  const MAX_PASSES = 3;
+  const TIMEOUT = 8000;
+  const POLL = 200;
+
+  const getErrorIds = () =>
+    qsa('#cardProgress .jfProgress-item.hasError .jfProgress-itemLabel[data-item-id]')
+      .map(n => n.dataset.itemId)
+      .filter(Boolean);
+
+  const gotoErrorCard = async (qid) => {
+    const lbl = qs(`#cardProgress .jfProgress-itemLabel[data-item-id="${qid}"]`);
+    const item = lbl?.closest('.jfProgress-item');
+    if (!item) return false;
+
+    item.scrollIntoView({ block: 'center' });
+    item.click();
+    await delay(5000);
+    const targetSel = `#cid_${qid}.isVisible`;
+    const t0 = Date.now();
+    while (Date.now() - t0 < TIMEOUT) {
+      await delay(POLL);
+      if (item.classList.contains('isActive') || qs(targetSel)) break;
+    }
+
+    const scope = qs(`#id_${qid}`) || qs(`#cid_${qid}`) || qs('.jfCard-wrapper.isVisible');
+    scope?.querySelector('input,textarea,select,[tabindex]')?.focus();
+    return true;
+  };
+
+  const waitCleared = async (qid) => {
+    const sel = `#cardProgress .jfProgress-itemLabel[data-item-id="${qid}"]`;
+    const t0 = Date.now();
+    while (Date.now() - t0 < TIMEOUT) {
+      await delay(POLL);
+      const item = qs(sel)?.closest('.jfProgress-item');
+      if (!item || !item.classList.contains('hasError')) return true;
+    }
+    return false;
+  };
+
+  for (let pass = 0; pass < MAX_PASSES; pass++) {
+    const errorIds = getErrorIds();
+    if (!errorIds.length) return 0;
+
+    for (const qid of errorIds) {
+      await gotoErrorCard(qid);
+      await resolver({ qid });      // <-- your fixer
+      await waitCleared(qid);
+    }
+  }
+  return getErrorIds().length; // remaining errors after passes
+}
+
 async function mainLoop(payload) {
   const delayTime = Number(payload.delayTime) || 250;
   const allowSubmit = !!payload.submitForm;
@@ -345,10 +409,33 @@ async function mainLoop(payload) {
       }
     }
 
-    await delay(100); // cho iframe widget trong card kịp render
+    // advance the card form
     const action = clickNextOrSubmit(card, allowSubmit);
     if (action === 'next') { await delay(delayTime); continue; }
-    if (action === 'submitted') { window.isFilling = false; break; }
+    if (action === 'submitted') {
+      await delay(5000); // let JotForm render errors
+      if (!hasValidationErrors()) {
+        window.isFilling = false; // all done
+        return;
+      }
+      // There are validation errors - try to resolve them all
+      // const payload = { ...payload }; // your payload if needed in resolver
+      // Resolve ALL progress-bar errors (will no-op if none)
+      const remaining = await handleProgressErrors(async ({ qid }) => {
+        // Call your actual fixer
+        await myResolveErrorItem({ qid, payload });
+      });
+
+      if (remaining === 0) {
+        // No errors left → submit again (redirect to verify-human; we don't care)
+        // trySubmitAgain();
+        window.isFilling = false;
+        break;
+      }
+
+      // Still errors → keep looping so your per-card logic can run again
+      continue;
+    }
   }
 }
 
