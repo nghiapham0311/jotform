@@ -3,6 +3,73 @@ document.addEventListener('DOMContentLoaded', () => {
   // hydrate basic fields from localStorage with sensible defaults
   const byId = id => document.getElementById(id);
 
+  byId('includeSpecialEvent').checked = JSON.parse(localStorage.getItem('includeSpecialEvent') || 'false');
+
+  // persist
+  byId('includeSpecialEvent').addEventListener('change', e => {
+    localStorage.setItem('includeSpecialEvent', e.target.checked);
+  });
+
+  // ====== Days to auto-fill (UI) ======
+  const DAY_COUNT = 31;                                  // đổi nếu cần
+  const daysGrid = document.getElementById('days-grid');
+
+  function defaultEnabledDays() {
+    return Array.from({ length: DAY_COUNT }, (_, i) => i + 1);
+  }
+
+  function loadEnabledDays() {
+    const raw = localStorage.getItem('enabledDays');
+    if (!raw) {
+      const def = defaultEnabledDays();
+      localStorage.setItem('enabledDays', JSON.stringify(def));
+      return def;
+    }
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length) return arr.map(Number);
+      const def = defaultEnabledDays();
+      localStorage.setItem('enabledDays', JSON.stringify(def));
+      return def;
+    } catch {
+      const def = defaultEnabledDays();
+      localStorage.setItem('enabledDays', JSON.stringify(def));
+      return def;
+    }
+  }
+
+  function saveEnabledDays() {
+    const chosen = [...daysGrid.querySelectorAll('input[type=checkbox]')]
+      .filter(cb => cb.checked)
+      .map(cb => Number(cb.dataset.day));
+    localStorage.setItem('enabledDays', JSON.stringify(chosen));
+  }
+
+  function buildDaysUI() {
+    const enabled = new Set(loadEnabledDays());
+    daysGrid.innerHTML = '';
+    for (let d = 1; d <= DAY_COUNT; d++) {
+      const id = `af-day-${d}`;
+      const wrap = document.createElement('label');
+      const cb   = document.createElement('input');
+      const sp   = document.createElement('span');
+      cb.type = 'checkbox';
+      cb.id = id;
+      cb.dataset.day = String(d);
+      cb.checked = enabled.has(d);              // mặc định: tất cả được bật
+      cb.addEventListener('change', saveEnabledDays);
+      sp.textContent = `Day ${d}`;
+      wrap.appendChild(cb);
+      wrap.appendChild(sp);
+      daysGrid.appendChild(wrap);
+    }
+  }
+
+  buildDaysUI();
+
+
+  const DEFAULT_PAIRS = [{"key":"Name of your Food Truck","value":"A12345678"},{"key":"Legal Bussiness Name","value":"HCMC University of Technology"},{"key":"License Plate Number","value":"Computer Science"},{"key":"State the Truck is Register in","value":"123 Nguyen Hue, District 1"}];
+
   byId('firstName').value = localStorage.getItem('firstName') || 'first Name';
   byId('lastName').value  = localStorage.getItem('lastName')  || 'last Name';
   byId('email').value     = localStorage.getItem('email')     || 'email@domain.com';
@@ -46,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
   savedValueList.forEach(v => addValueRow(v));
 
   // load saved key/value pairs [{ key, value }]
-  const savedPairs = JSON.parse(localStorage.getItem('keyValuePairs') || '[]');
+  const savedPairs = JSON.parse(localStorage.getItem('keyValuePairs') || JSON.stringify(DEFAULT_PAIRS));
   savedPairs.forEach(p => addPairRow(p.key, p.value));
 
   addPairBtn.addEventListener('click', () => {
@@ -156,7 +223,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const checkboxTxtArr = [];
     const list = JSON.parse(localStorage.getItem('valueList') || '[]');
     if (list.length > 0) for (const v of list) checkboxTxtArr.push(v.split(','));
+    const enabledDays = [...document.querySelectorAll('#days-grid input[type=checkbox]')]
+      .filter(cb => cb.checked)
+      .map(cb => Number(cb.dataset.day));
 
+    localStorage.setItem('enabledDays', JSON.stringify(enabledDays));
     const payload = {
       firstName: byId('firstName').value,
       lastName : byId('lastName').value,
@@ -166,7 +237,9 @@ document.addEventListener('DOMContentLoaded', () => {
       year: y || 0, month: m || 0, day: d || 0,
       submitForm: submitFormToggle.checked,
       inputTxtArr,
-      checkboxTxtArr
+      checkboxTxtArr,
+      enabledDays,
+      includeSpecialEvent: byId('includeSpecialEvent').checked
     };
 
     chrome.storage.local.set(payload, () => console.log('Data saved:', payload));

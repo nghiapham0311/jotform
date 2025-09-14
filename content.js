@@ -4,6 +4,56 @@
  * Iframe (app-widgets.jotform.io): listen + click options + ACK
  */
 
+//============== HELPERS ==============//
+// --- Day filter helpers ---
+function isSpecialEventTitle(title) {
+  return /\bspecial\s*event\b/i.test(String(title || ''));
+}
+
+// enableDays: Array<number | string>, ví dụ: [1,3] hoặc ["1","3","5-7"]
+function buildEnableDaysSet(arr) {
+  const set = new Set();
+  (Array.isArray(arr) ? arr : []).forEach(v => {
+    if (typeof v === 'number' && Number.isFinite(v)) { set.add(v); return; }
+    const s = String(v ?? '').trim();
+    if (!s) return;
+    const m = s.match(/^(\d+)\-(\d+)$/);        // range "5-7"
+    if (m) {
+      let a = +m[1], b = +m[2]; if (a > b) [a, b] = [b, a];
+      for (let i = a; i <= b; i++) set.add(i);
+    } else {
+      const n = parseInt(s, 10);
+      if (!Number.isNaN(n)) set.add(n);
+    }
+  });
+  return set;  // size === 0 -> không tick card nào
+}
+
+function getCardTitleText(card) {
+  const el =
+    card.querySelector('.jsQuestionLabelContainer') ||
+    card.querySelector('.jfQuestion-label, .jf-question-label, .form-label, [id^="label_"]');
+  return (el?.textContent || '').trim();
+}
+
+function extractDayFromTitle(title) {
+  // Lấy số ngày trong tháng ở cuối title. Hỗ trợ "1", "01", "1st/2nd/3rd/4th"
+  const m = String(title || '').trim().match(/(\d{1,2})(?:st|nd|rd|th)?\s*$/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/** true nếu card được phép theo enableDays */
+function isCardEnabledByDays(card, enableDaysSpec) {
+  const set = parseDaysSpec(enableDaysSpec);   // null => không lọc
+  if (set === null) return true;
+  const title = getCardTitleText(card);
+  const n = extractDayFromTitle(title);
+  // Nếu không phải card "Day N" thì coi như không bật
+  return n != null && set.has(n);
+}
+
+//================= END HELPERS =================//
+
 /* ===== Tiny utils ===== */
 const qs = (s, r = document) => r.querySelector(s);
 const qsa = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -213,17 +263,9 @@ function getWidgetComponents(card) {
   const out = (li && isVisible(li)) ? [li] : [];
   const titleEl = card.querySelector('.jsQuestionLabelContainer');
   const title = titleEl ? titleEl.textContent.trim() : '(no title)';
-  console.log(`Card: ${card.id} | Title: ${title} | Widget count: ${out.length}`);
+  // console.log(`Card: ${card.id} | Title: ${title} | Widget count: ${out.length}`);
   return out;
 
-  // const widgets = qsa('li.form-line[data-type="control_widget"]', card).filter(isVisible);
-
-  // // Lấy tiêu đề card (ví dụ "Day 1")
-  // const titleEl = card.querySelector('.jsQuestionLabelContainer');
-  // const title = titleEl ? titleEl.textContent.trim() : '(no title)';
-
-  // console.log(`Card: ${card.id} | Title: ${title} | Widget count: ${widgets.length}`);
-  // return widgets;
 }
 const hasWidgetInCard = (card) => getWidgetComponents(card).length > 0;
 
@@ -399,6 +441,14 @@ async function mainLoop(payload) {
   const inputTxtArr = Array.isArray(payload.inputTxtArr) ? payload.inputTxtArr : [];
   const checkboxTxtArr = Array.isArray(payload.checkboxTxtArr) ? payload.checkboxTxtArr : [];
   const tokensForWidget = checkboxTxtArr.flat();
+  // NEW: đọc array (ưu tiên enableDays / enabledays / enable_days)
+  const enabledDaysSet = buildEnableDaysSet(
+    payload.enabledDays ?? payload.enableddays ?? payload.enabled_days ?? []
+  );
+
+  const includeSpecialEvent = !!(payload.includeSpecialEvent ?? payload.includeSpecialDay);
+
+  const widgetSentForCard = new Set();
 
   let started = false, lastCardId = '';
 
@@ -477,8 +527,18 @@ async function mainLoop(payload) {
     }
 
     // ===== Widget only when present =====
-    if (tokensForWidget.length && hasWidgetInCard(card)) {
-      await selectWidgetOptionsInCard(card, tokensForWidget, 5000);
+    if (tokensForWidget.length && hasWidgetInCard(card) && !widgetSentForCard.has(card.id)) {
+      const dayNum = extractDayFromTitle(getCardTitleText(card));
+      const title  = getCardTitleText(card);
+      // chỉ tick nếu title parse được "Day N" và N nằm trong enableDaysSet
+        const shouldTick =
+      (dayNum != null && enabledDaysSet.has(dayNum)) ||
+      (includeSpecialEvent && isSpecialEventTitle(title));
+
+      if (shouldTick) {
+        await selectWidgetOptionsInCard(card, tokensForWidget, 5000);
+        widgetSentForCard.add(card.id);
+      }
     }
 
     // Next / Submit
