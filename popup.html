@@ -1,106 +1,234 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Auto Fill Form</title>
-    <!-- Bootstrap 5 CSS từ tệp cục bộ -->
-    <link href="css/bootstrap.min.css" rel="stylesheet">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>KTFormation</title>
+  <!-- Bootstrap 5 (local) -->
+  <link href="css/bootstrap.min.css" rel="stylesheet"/>
 
-    <style>
-        body {
-            width: 300px;
-        }
+  <style>
+    .container .form-label {
+        font-weight: 600;
+        
+    }
+    :root{
+      --brand: #3b82f6;
+      --soft-danger-bg: #fff1f2;
+      --soft-danger-br: #fecdd3;
+      --soft-danger-tx: #b91c1c;
+    }
 
-        footer {
-            font-size: 12px;
-            text-align: center;
-            margin-top: 20px;
-        }
+    /* Soft modern background */
+body{ width:320px; background:#f5f7fb; }
+    /* Card nổi nhẹ trên nền mới */
+    .container{
+        background:#ffffff;
+        border:1px solid rgba(17,24,39,.06);
+        border-radius:16px;
+        box-shadow:0 8px 24px rgba(17,24,39,.06);
+    }
+    h1.h4{ font-weight:700; letter-spacing:.2px; }
 
-        #statusMessage {
-            display: none;
-            /* Ẩn thông báo mặc định */
-            margin-bottom: 20px;
-            /* Thêm khoảng cách dưới thông báo */
-        }
-    </style>
+    /* ========= Remove button -> minus icon & orange color ========= */
+    .btn-danger{
+      /* Orange (soft) palette */
+      --bs-btn-bg: #fff7ed;
+      --bs-btn-border-color: #fed7aa;
+      --bs-btn-color: #9a3412;
+      --bs-btn-hover-bg: #ffedd5;
+      --bs-btn-hover-border-color: #fdba74;
+      --bs-btn-hover-color: #7c2d12;
+
+      /* Icon-only look */
+      padding: 6px 10px;
+      width: 32px;
+      height: 32px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+
+      /* Hide any text content so only icon shows */
+      font-size: 0;
+      line-height: 0;
+      position: relative;
+    }
+    .btn-danger::before{
+      content: "−"; /* Unicode minus sign */
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    /* (kept) custom buttons */
+    .btn-start{
+      --bs-btn-bg: #56de83;
+      --bs-btn-border-color: #49ca7e;
+      --bs-btn-color: #ffffff;
+      --bs-btn-hover-bg: #1a9d29;
+      --bs-btn-hover-border-color: #4ce675;
+      --bs-btn-hover-color: #19ac45;
+    }
+    .btn-pause{
+      --bs-btn-bg: #f59e0b;
+      --bs-btn-border-color: #fcd34d;
+      --bs-btn-color: #ffffff;
+      --bs-btn-hover-bg: #d97706;
+      --bs-btn-hover-border-color: #fbbf24;
+      --bs-btn-hover-color: #ffffff;
+    }
+    .btn-stop{
+      --bs-btn-bg: #f87171;
+      --bs-btn-border-color: #fca5a1;
+      --bs-btn-color: #ffffff;
+      --bs-btn-hover-bg: #fca5a1;
+      --bs-btn-hover-border-color: #fda4af;
+      --bs-btn-hover-color: #991b1b;
+    }
+
+    /* section header */
+    .section-title{ font-weight:600; margin-bottom:6px; display:flex; align-items:center; gap:8px; }
+    .section-title .dot{ width:8px; height:8px; border-radius:50%; background:var(--brand); opacity:.85; }
+
+    /* pairs / values blocks */
+    #pairs-container .pair-item{
+      background:#fcfcfd; border:1px solid #eceff5; border-radius:12px; padding:10px;
+    }
+    #values-container{ counter-reset: priority; }
+    .value-item{
+      position:relative; counter-increment: priority;
+      padding-left:36px; background:#fafbff; border:1px solid #eef2ff; border-radius:12px;
+      padding-top:10px; padding-bottom:10px;
+    }
+    .value-item::before{
+      content: counter(priority);
+      position:absolute; left:10px; top:50%; transform:translateY(-50%);
+      width:20px; height:20px; border-radius:999px; display:flex; align-items:center; justify-content:center;
+      font-size:.75rem; color:#1d4ed8; background:#e0e7ff; font-weight:700;
+    }
+    .value-item .btn{ margin-top:6px; }
+
+    /* ============ Days (RESET to default checkboxes) ============ */
+    #days-grid{ display:flex; flex-wrap:wrap; gap:.35rem .75rem; }
+    /* reset any previous pill overrides */
+    #days-grid input[type="checkbox"]{
+      position: static !important;
+      opacity: 1 !important;
+      width: auto !important;
+      height: auto !important;
+      pointer-events: auto !important;
+    }
+    #days-grid label{
+      padding: 0 !important;
+      border: 0 !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      color: inherit !important;
+      cursor: pointer;
+      box-shadow: none !important;
+      margin-left: .25rem;
+      margin-right: .25rem;
+    }
+    /* optional: make each day a compact inline form-check */
+    .day-item.form-check{ margin-bottom: .125rem; }
+    .day-item .form-check-input{ margin-top: .2rem; }
+
+    /* status */
+    #statusMessage{ display:none; margin-bottom:12px; border-radius:12px; padding:8px 10px; background:#f8fafc; color:#334155; }
+
+    footer{ font-size:12px; text-align:center; margin-top:16px; color:#6b7280; }
+    footer a{ color:#6b7280; text-decoration:underline; }
+  </style>
 </head>
 
 <body>
-    <div class="container mt-3">
-        <h1 class="h4">Auto Fill Form</h1>
-        <div class="mb-3">
-            <label for="firstName" class="form-label">Delay time (ms)</label>
-            <input type="text" class="form-control" id="delayTime" value="250" placeholder="Delay time (ms)">
-        </div>
+  <div class="container mt-3">
+    <h1 class="h4">KTFormation</h1>
 
-        <div class="mb-3">
-            <label for="firstName" class="form-label">First Name</label>
-            <input type="text" class="form-control" id="firstName" placeholder="First Name">
-        </div>
-        <div class="mb-3">
-            <label for="lastName" class="form-label">Last Name</label>
-            <input type="text" class="form-control" id="lastName" placeholder="Last Name">
-        </div>
-        <div class="mb-3">
-            <label for="email" class="form-label">Email</label>
-            <input type="email" class="form-control" id="email" placeholder="Email">
-        </div>
-        <div class="mb-3">
-            <label for="phone" class="form-label">Phone Number</label>
-            <input type="tel" class="form-control" id="phone" placeholder="Phone Number">
-        </div>
-        <div class="mb-3">
-            <label for="dob" class="form-label">Date of Birth</label>
-            <input type="date" class="form-control" id="dob" placeholder="Date of Birth">
-        </div>
-
-        <!-- Vùng thêm/xóa các cặp key/value -->
-        <div class="key-value-pairs mb-3">
-            <h6>Custom questions/answers</h6>
-            <div id="pairs-container"></div>
-            <button id="add-pair" class="btn btn-primary btn-sm mt-2">Add questions/answer</button>
-        </div>
-
-        <div class="value-list mb-3">
-            <h6>Custom checkbox</h6>
-            <div id="values-container"></div>
-            <button id="add-value" class="btn btn-primary btn-sm mt-2">Add Value</button>
-        </div>
-
-        <!-- Ô tích cho việc Submit hay không -->
-        <div class="form-check mb-3">
-            <input class="form-check-input" type="checkbox" id="submitForm">
-            <label class="form-check-label" for="submitForm">Submit form automatically</label>
-        </div>
-
-        <!-- Dòng thông báo trạng thái -->
-        <!-- <div id="statusMessage" class="alert alert-info text-center" style="display: none;"> -->
-        <div id="statusMessage" style="display: none;">
-            <!-- Thông báo trạng thái sẽ được cập nhật qua JavaScript -->
-        </div>
-
-        <!-- <button id="stop" class="btn btn-secondary">Stop</button>
-        <button id="start" class="btn btn-primary">Start</button> -->
-
-        <div class="d-flex justify-content-end">
-            <button id="stop" class="btn btn-secondary me-2 btn-large" disabled>Stop</button>
-            <button id="start" class="btn btn-primary btn-large">Start</button>
-        </div>
+    <div class="mb-3">
+      <label for="delayTime" class="form-label">Delay time (ms)</label>
+      <input type="text" class="form-control" id="delayTime" value="250" placeholder="Delay time (ms)">
     </div>
 
-    <footer>
-        <p>&copy; <span id="year"></span> <a href="https://FB.com/100004518225124" target="_blank">Tuan.VHIT</a>. All
-            rights reserved.</p>
-    </footer>
+    <div class="mb-3">
+      <label for="firstName" class="form-label">First Name</label>
+      <input type="text" class="form-control" id="firstName" placeholder="First Name">
+    </div>
+    <div class="mb-3">
+      <label for="lastName" class="form-label">Last Name</label>
+      <input type="text" class="form-control" id="lastName" placeholder="Last Name">
+    </div>
+    <div class="mb-3">
+      <label for="email" class="form-label">Email</label>
+      <input type="email" class="form-control" id="email" placeholder="Email">
+    </div>
+    <div class="mb-3">
+      <label for="phone" class="form-label">Phone Number</label>
+      <input type="tel" class="form-control" id="phone" placeholder="Phone Number">
+    </div>
+    <div class="mb-3">
+      <label for="dob" class="form-label">Date of Birth</label>
+      <input type="date" class="form-control" id="dob" placeholder="Date of Birth">
+    </div>
 
-    <!-- Bootstrap 5 JS từ tệp cục bộ -->
-    <script src="js/bootstrap.bundle.min.js"></script>
-    <script src="popup.js"></script>
-    <!-- Thêm footer.js -->
-    <script src="footer.js"></script>
+    <!-- Custom Q/A -->
+    <div class="key-value-pairs mb-3">
+      <div class="section-title"><span class="dot"></span><span>Custom questions/answers</span></div>
+      <div id="pairs-container"></div>
+      <button id="add-pair" class="btn btn-primary btn-sm mt-2">Add questions/answer</button>
+    </div>
+
+    <!-- SPECIAL EVENT -->
+    <div class="mb-2 form-check">
+      <input type="checkbox" id="includeSpecialEvent" class="form-check-input">
+      <label for="includeSpecialEvent" class="form-check-label">Include SPECIAL EVENT</label>
+    </div>
+
+    <!-- Days -->
+    <div class="mt-3">
+      <div class="section-title"><span class="dot"></span><span>Selected days</span></div>
+      <!-- NOTE: popup.js sẽ render vào đây dạng: 
+           <div class="day-item form-check form-check-inline">
+             <input class="form-check-input" type="checkbox" id="day-1" value="1" checked>
+             <label class="form-check-label" for="day-1">Day 1</label>
+           </div> -->
+      <div id="days-grid"></div>
+      <small class="text-muted d-block mt-1">Uncheck the days you don’t want to auto-fill.</small>
+    </div>
+
+    <!-- Custom checkbox (priority top → down) -->
+    <div class="value-list mb-3 mt-3">
+      <div class="section-title"><span class="dot"></span><span>Selected options</span></div>
+      <small class="text-muted d-block mb-2">
+        Priority is top → down. I’ll pick at most <strong>one</strong> option.
+      </small>
+      <div id="values-container"></div>
+      <button id="add-value" class="btn btn-primary btn-sm mt-2">Add option</button>
+    </div>
+
+    <!-- Auto submit -->
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="checkbox" id="submitForm">
+      <label class="form-check-label" for="submitForm">Submit form automatically</label>
+    </div>
+
+    <!-- Status -->
+    <div id="statusMessage"></div>
+
+    <!-- Actions -->
+    <div class="d-flex justify-content-end">
+      <button id="start" class="btn me-2 mb-2 btn-large btn-start">Start</button>
+      <button id="stop" class="btn me-2 mb-2 btn-large btn-stop" disabled>Pause/Stop</button>
+    </div>
+  </div>
+
+  <!-- <footer>
+    <p>&copy; <span id="year"></span> <a href="https://www.facebook.com/dtkimthoa" target="_blank">DTKT</a>. All rights reserved.</p>
+  </footer> -->
+
+  <!-- Scripts -->
+  <script src="js/bootstrap.bundle.min.js"></script>
+  <script src="popup.js"></script>
+  <script src="footer.js"></script>
 </body>
-
 </html>

@@ -4,7 +4,58 @@
  * - Khi vào error page (form-line-error / animate-shake), tự uncheck option invalid trong iframe rồi NEXT
  */
 
-/* ===================== Tiny utils ===================== */
+
+//============== HELPERS ==============//
+// --- Day filter helpers ---
+function isSpecialEventTitle(title) {
+  return /\bspecial\s*event\b/i.test(String(title || ''));
+}
+
+// enableDays: Array<number | string>, ví dụ: [1,3] hoặc ["1","3","5-7"]
+function buildEnableDaysSet(arr) {
+  const set = new Set();
+  (Array.isArray(arr) ? arr : []).forEach(v => {
+    if (typeof v === 'number' && Number.isFinite(v)) { set.add(v); return; }
+    const s = String(v ?? '').trim();
+    if (!s) return;
+    const m = s.match(/^(\d+)\-(\d+)$/);        // range "5-7"
+    if (m) {
+      let a = +m[1], b = +m[2]; if (a > b) [a, b] = [b, a];
+      for (let i = a; i <= b; i++) set.add(i);
+    } else {
+      const n = parseInt(s, 10);
+      if (!Number.isNaN(n)) set.add(n);
+    }
+  });
+  return set;  // size === 0 -> không tick card nào
+}
+
+function getCardTitleText(card) {
+  const el =
+    card.querySelector('.jsQuestionLabelContainer') ||
+    card.querySelector('.jfQuestion-label, .jf-question-label, .form-label, [id^="label_"]');
+  return (el?.textContent || '').trim();
+}
+
+function extractDayFromTitle(title) {
+  // Lấy số ngày trong tháng ở cuối title. Hỗ trợ "1", "01", "1st/2nd/3rd/4th"
+  const m = String(title || '').trim().match(/(\d{1,2})(?:st|nd|rd|th)?\s*$/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/** true nếu card được phép theo enableDays */
+function isCardEnabledByDays(card, enableDaysSpec) {
+  const set = parseDaysSpec(enableDaysSpec);   // null => không lọc
+  if (set === null) return true;
+  const title = getCardTitleText(card);
+  const n = extractDayFromTitle(title);
+  // Nếu không phải card "Day N" thì coi như không bật
+  return n != null && set.has(n);
+}
+
+//================= END HELPERS =================//
+
+/* ===== Tiny utils ===== */
 const qs = (s, r = document) => r.querySelector(s);
 const qsa = (s, r = document) => Array.from(r.querySelectorAll(s));
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
@@ -307,7 +358,6 @@ function waitForWidgetIframeInComp(comp, { appearTimeout = 4000, loadTimeout = 4
     });
 }
 
-/* ===== Parent → Iframe: SELECT (giữ nguyên logic chọn) ===== */
 async function selectWidgetOptionsInCard(card, tokens = [], timeout = 4000) {
     const comps = getWidgetComponents(card);
     if (!comps.length || !tokens?.length) return false;
@@ -416,7 +466,9 @@ async function clearInvalidAndUnlockNext(card, timeout = 1800, { unlock = false 
     return ok;
 }
 
-/* ===================== Iframe logic (SELECT + CLEAR-INVALID) ===================== */
+/* ===================== Iframe logic (
++ CLEAR-INVALID) ===================== */
+
 function waitWidgetReady(maxTime = 5000) {
     return new Promise((resolve) => {
         const ok = () => document.querySelector("#gr_list label.checkbox, #checklist label.checkbox, ul.checklist label.checkbox");
@@ -497,6 +549,48 @@ function clickWidgetByTokens(tokens = [], root = document) {
         document.dispatchEvent(new Event("change", { bubbles: true }));
     }
     return anyChanged;
+}
+
+// NEW: chọn đúng 1 option theo thứ tự tokens
+function clickWidgetFirstAvailable(tokens = [], root = document) {
+  const list = root.querySelector('#gr_list, #checklist, ul.checklist');
+  if (!list) return { changed: false, picked: null };
+
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const wanted = (tokens || []).map(norm).filter(Boolean);
+
+  // build danh sách option
+  const labels = Array.from(list.querySelectorAll('label.checkbox'));
+  const options = labels.map(lab => {
+    const text = norm(lab.textContent);
+    const forId = norm(lab.getAttribute('for'));
+    const input = forId ? document.getElementById(forId) : null;
+    return { lab, text, forId, input };
+  });
+
+  for (const tok of wanted) {
+    // tìm những option match token này
+    const matches = options.filter(o => o.text.includes(tok) || (o.forId && o.forId === tok));
+    for (const o of matches) {
+      // bỏ qua item hết hàng/disabled/đã checked
+      if (isWidgetLabelDisabled(o.lab)) continue;
+      if (o.input && (o.input.disabled || o.input.checked)) continue;
+
+      // click
+      const target = o.input || o.lab;
+      target.scrollIntoView({ block: 'center' });
+      dispatchMouseSeq(o.lab);
+      if (o.input) {
+        dispatchMouseSeq(o.input);
+        if (!o.input.checked) o.input.checked = true;
+        o.input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return { changed: true, picked: tok };
+    }
+    // không có option nào phù hợp/available cho token này → thử token tiếp
+  }
+
+  return { changed: false, picked: null };
 }
 
 if (IS_IFRAME && !window.__JF_IFRAME_READY__) {
@@ -695,6 +789,31 @@ async function smartNextOrSubmit(card, allowSubmit, tokensForWidget = []) {
     return null;
 }
 
+if (IS_IFRAME && !window.__JF_IFRAME_READY__) {
+  window.__JF_IFRAME_READY__ = true;
+  window.addEventListener('message', async (ev) => {
+    const data = ev.data || {};
+    if (data.type === 'JF_WIDGET_PING') {
+      ev.source.postMessage({ type: 'JF_WIDGET_PONG' }, ev.origin || "*");
+      return;
+    }
+    if (data.type !== 'JF_WIDGET_SELECT') return;
+    await waitWidgetReady(5000);
+
+    let result = { changed: false, picked: null };
+    if (data.single) {
+      result = clickWidgetFirstAvailable(data.tokens || [], document);
+    } else {
+      // fallback cũ: tick tất (nếu cần)
+      const changed = clickWidgetByTokens(data.tokens || [], document);
+      result = { changed, picked: null };
+    }
+
+    document.dispatchEvent(new Event('change', { bubbles: true }));
+    ev.source.postMessage({ type: 'JF_WIDGET_SELECTED', changed: !!result.changed, picked: result.picked }, ev.origin || "*");
+  }, false);
+}
+
 
 // ===== Observer-based wait helpers =====
 function getRailEl() { return qs('#cardProgress'); }
@@ -760,7 +879,6 @@ function waitWithObserver(target, { predicate, timeout = 2000 }) {
             }
         });
         obs.observe(target, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'aria-invalid'] });
-
         const t = setTimeout(() => { obs.disconnect(); resolve(predicate?.() || false); }, timeout);
     });
 }
@@ -879,6 +997,18 @@ async function mainLoop(payload) {
     const inputTxtArr = Array.isArray(payload.inputTxtArr) ? payload.inputTxtArr : [];
     const checkboxTxtArr = Array.isArray(payload.checkboxTxtArr) ? payload.checkboxTxtArr : [];
     const tokensForWidget = checkboxTxtArr.flat();
+  
+    const inputTxtArr = Array.isArray(payload.inputTxtArr) ? payload.inputTxtArr : [];
+    const checkboxTxtArr = Array.isArray(payload.checkboxTxtArr) ? payload.checkboxTxtArr : [];
+    const tokensForWidget = checkboxTxtArr.flat();
+    // NEW: đọc array (ưu tiên enableDays / enabledays / enable_days)
+    const enabledDaysSet = buildEnableDaysSet(
+      payload.enabledDays ?? payload.enableddays ?? payload.enabled_days ?? []
+    );
+
+    const includeSpecialEvent = !!(payload.includeSpecialEvent ?? payload.includeSpecialDay);
+
+    const widgetSentForCard = new Set();
 
     let started = false, lastCardId = "";
     let lastSubmitQid = null;
@@ -1032,6 +1162,20 @@ async function mainLoop(payload) {
         if (checkboxTxtArr.length && hasWidgetInCard(card)) {
             await selectWidgetOptionsInCard(card, checkboxTxtArr.flat(), 5000);
             await delay(120); // cho bridge VALUE/ DIRTY unlock NEXT
+        }
+        
+          if (tokensForWidget.length && hasWidgetInCard(card) && !widgetSentForCard.has(card.id)) {
+            const dayNum = extractDayFromTitle(getCardTitleText(card));
+            const title  = getCardTitleText(card);
+            // chỉ tick nếu title parse được "Day N" và N nằm trong enableDaysSet
+              const shouldTick =
+            (dayNum != null && enabledDaysSet.has(dayNum)) ||
+            (includeSpecialEvent && isSpecialEventTitle(title));
+
+            if (shouldTick) {
+              await selectWidgetOptionsInCard(card, tokensForWidget, 5000);
+              widgetSentForCard.add(card.id);
+            }
         }
 
         // ==== Next / Submit
