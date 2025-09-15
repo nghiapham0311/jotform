@@ -6,6 +6,16 @@
  */
 
 //============== HELPERS ==============//
+// đặt ngay sau các helper extractDayFromTitle/getCardTitleText
+function shouldTickCard(card, enabledDaysSet = null, includeSpecialEvent = false) {
+  const title = getCardTitleText(card);
+  const dayNum = extractDayFromTitle(title);
+  const allowDay = (enabledDaysSet?.size > 0) && dayNum != null && enabledDaysSet.has(dayNum);
+  const allowSpecial = !!includeSpecialEvent && isSpecialEventTitle(title);
+  return allowDay || allowSpecial;
+}
+
+
 function isSpecialEventTitle(title) { return /\bspecial\s*event\b/i.test(String(title || '')); }
 
 function buildEnableDaysSet(arr) {
@@ -213,13 +223,55 @@ async function gotoCardByQid(qid, { timeout = 5000, poll = 150 } = {}) {
   } else { try { location.hash = `#cid_${qid}`; } catch { } }
   const scope = qs(`#id_${qid}`) || qs(`#cid_${qid}`) || qs('.jfCard-wrapper.isVisible'); scope?.querySelector('input,textarea,select,[tabindex]')?.focus(); return true;
 }
-async function stepIntoErrorViaPrev({ tokensForWidget = [], warmup = 300 } = {}) {
-  const active = qs('#cardProgress .jfProgress-item.isActive'); const prev = active?.previousElementSibling; if (!prev) return false;
-  prev.scrollIntoView({ block: 'center' }); prev.click(); await delay(warmup);
+// async function stepIntoErrorViaPrev({ tokensForWidget = [], warmup = 300 } = {}) {
+//   const active = qs('#cardProgress .jfProgress-item.isActive'); const prev = active?.previousElementSibling; if (!prev) return false;
+//   prev.scrollIntoView({ block: 'center' }); prev.click(); await delay(warmup);
+//   const card = getActiveCard(); if (!card) return false;
+//   if (tokensForWidget.length && hasWidgetInCard(card)) { await selectWidgetOptionsInCard(card, tokensForWidget, 2000, { single: true }); await delay(120); }
+//   const act = await smartNextOrSubmit(card, false, tokensForWidget); return act === 'next';
+// }
+// async function stepIntoErrorViaPrev({ tokensForWidget = [], warmup = 300 } = {}) {
+//   const active = qs('#cardProgress .jfProgress-item.isActive');
+//   const prev = active?.previousElementSibling; if (!prev) return false;
+
+//   prev.scrollIntoView({ block: 'center' }); prev.click();
+//   await delay(warmup);
+
+//   const card = getActiveCard(); if (!card) return false;
+
+//   if (tokensForWidget.length && hasWidgetInCard(card) && shouldTickCard(card)) {
+//     await selectWidgetOptionsInCard(card, tokensForWidget, 2000, { single: true });
+//     await delay(120);
+//   }
+
+//   const act = await smartNextOrSubmit(card, false, tokensForWidget);
+//   return act === 'next';
+// }
+async function stepIntoErrorViaPrev({
+  tokensForWidget = [],
+  warmup = 300,
+  enabledDaysSet = null,
+  includeSpecialEvent = false
+} = {}) {
+  const active = qs('#cardProgress .jfProgress-item.isActive');
+  const prev = active?.previousElementSibling; if (!prev) return false;
+
+  prev.scrollIntoView({ block: 'center' }); prev.click();
+  await delay(warmup);
+
   const card = getActiveCard(); if (!card) return false;
-  if (tokensForWidget.length && hasWidgetInCard(card)) { await selectWidgetOptionsInCard(card, tokensForWidget, 2000, { single: true }); await delay(120); }
-  const act = await smartNextOrSubmit(card, false, tokensForWidget); return act === 'next';
+
+  if (tokensForWidget.length && hasWidgetInCard(card) &&
+      shouldTickCard(card, enabledDaysSet, includeSpecialEvent)) {
+    await selectWidgetOptionsInCard(card, tokensForWidget, 2000, { single: true });
+    await delay(120);
+  }
+
+  const act = await smartNextOrSubmit(card, false, tokensForWidget);
+  return act === 'next';
 }
+
+
 
 /* ===================== Widget (parent) helpers ===================== */
 function getWidgetComponents(card) {
@@ -592,19 +644,43 @@ function buildStateSig() {
   return `${qid}|${disabled}|${hasErr ? 1 : 0}`;
 }
 
-async function rescueCurrentCard(tokensForWidget = []) {
+// async function rescueCurrentCard(tokensForWidget = []) {
+//   const card = getActiveCard(); if (!card) return false;
+
+//   if (hasWidgetInCard(card) && shouldTickCard(card)) {
+//     await selectWidgetOptionsInCard(card, tokensForWidget, 1500, { single: true });
+//     await nudgeWidgetDirtyInCard(card, 1200);
+//     await clearInvalidAndUnlockNext(card, 1400, { unlock: false });
+//     await waitCardCleanFast(card, { timeout: T.cardCleanTimeout });
+//     await waitRailClearedFast(cardIdToQid(card), { timeout: T.railTimeout });
+//   }
+
+//   tryAgreeToggles(card);
+//   const moved = await smartNextOrSubmit(card, false, tokensForWidget);
+//   return moved === 'next';
+// }
+
+async function rescueCurrentCard(
+  tokensForWidget = [],
+  enabledDaysSet = null,
+  includeSpecialEvent = false
+) {
   const card = getActiveCard(); if (!card) return false;
-  if (hasWidgetInCard(card)) {
+
+  if (hasWidgetInCard(card) && shouldTickCard(card, enabledDaysSet, includeSpecialEvent)) {
     await selectWidgetOptionsInCard(card, tokensForWidget, 1500, { single: true });
     await nudgeWidgetDirtyInCard(card, 1200);
     await clearInvalidAndUnlockNext(card, 1400, { unlock: false });
     await waitCardCleanFast(card, { timeout: T.cardCleanTimeout });
     await waitRailClearedFast(cardIdToQid(card), { timeout: T.railTimeout });
   }
+
   tryAgreeToggles(card);
   const moved = await smartNextOrSubmit(card, false, tokensForWidget);
   return moved === 'next';
 }
+
+
 async function hardResetActiveCard() { const card = getActiveCard(); if (!card) return; const qid = cardIdToQid(card); const lbl = qs(`#cardProgress .jfProgress-itemLabel[data-item-id="${qid}"]`); lbl?.closest('.jfProgress-item')?.click(); await delay(160); }
 function nextFrame() { return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); }
 function waitWithObserver(target, { predicate, timeout = 2000 }) {
@@ -618,40 +694,98 @@ async function waitCardCleanFast(card, { timeout = 1800 } = {}) { const ok = () 
 async function waitRailClearedFast(qid, { timeout = 2500 } = {}) { const lbl = qs(`#cardProgress .jfProgress-itemLabel[data-item-id="${qid}"]`); const item = lbl?.closest('.jfProgress-item'); const ok = () => !railHasError(qid); const res = await waitWithObserver(item || document.body, { predicate: ok, timeout }); if (!res) return ok(); await nextFrame(); return true; }
 
 /* ===================== Submit-error resolver (multi-pass) ===================== */
-async function resolveErrorsOnCard(tokensForWidget = [], { advance = false } = {}) {
+// async function resolveErrorsOnCard(tokensForWidget = [], { advance = false } = {}) {
+//   const card = getActiveCard(); if (!card) return false;
+//   const qid = cardIdToQid(card);
+
+//   const railHas = collectErrorQids().indexOf(qid) !== -1;
+//   if (hasWidgetInCard(card) && (hasLineErrorInCard(card) || railHas)) {
+//     for (let i = 0; i < 2; i++) {
+//       const ok = await clearInvalidAndUnlockNext(card, 1200, { unlock: true });
+//       if (ok) break;
+//       await delay(120);
+//     }
+
+//     if (shouldTickCard(card)) {
+//       const sel = await selectWidgetOptionsInCard(card, tokensForWidget, 1600, { single: true });
+//       if (!sel.picked) {
+//         const moved = await smartNextOrSubmit(card, false, tokensForWidget);
+//         return moved === 'next';
+//       }
+//       await waitCardCleanFast(card, { timeout: T.cardCleanTimeout });
+//       await waitRailClearedFast(qid, { timeout: T.railTimeout });
+//     }
+//   }
+
+//   tryAgreeToggles(card);
+//   if (!advance) return true;
+//   const res = await smartNextOrSubmit(card, false, tokensForWidget);
+//   return res === 'next';
+// }
+async function resolveErrorsOnCard(
+  tokensForWidget = [],
+  { advance = false, enabledDaysSet = null, includeSpecialEvent = false } = {}
+) {
   const card = getActiveCard(); if (!card) return false;
   const qid = cardIdToQid(card);
 
   const railHas = collectErrorQids().indexOf(qid) !== -1;
   if (hasWidgetInCard(card) && (hasLineErrorInCard(card) || railHas)) {
-    // 1) clear invalid & unlock
     for (let i = 0; i < 2; i++) {
       const ok = await clearInvalidAndUnlockNext(card, 1200, { unlock: true });
       if (ok) break;
       await delay(120);
     }
 
-    // 2) attempt priority SINGLE selection; if none available → press NEXT (no selection)
-    const sel = await selectWidgetOptionsInCard(card, tokensForWidget, 1600, { single: true });
-    if (!sel.picked) {
-      // none of user's desired options are available → just try NEXT
-      const moved = await smartNextOrSubmit(card, false, tokensForWidget);
-      return moved === 'next';
+    if (shouldTickCard(card, enabledDaysSet, includeSpecialEvent)) {
+      const sel = await selectWidgetOptionsInCard(card, tokensForWidget, 1600, { single: true });
+      if (!sel.picked) {
+        const moved = await smartNextOrSubmit(card, false, tokensForWidget);
+        return moved === 'next';
+      }
+      await waitCardCleanFast(card, { timeout: T.cardCleanTimeout });
+      await waitRailClearedFast(qid, { timeout: T.railTimeout });
     }
-
-    // stabilize after a selection
-    await waitCardCleanFast(card, { timeout: T.cardCleanTimeout });
-    await waitRailClearedFast(qid, { timeout: T.railTimeout });
   }
 
   tryAgreeToggles(card);
-
   if (!advance) return true;
   const res = await smartNextOrSubmit(card, false, tokensForWidget);
   return res === 'next';
 }
-async function handleSubmitErrors({ tokensForWidget = [], maxLoops = 6, waitForQidsMs = 4500 } = {}) {
-  const waitIds = async () => { const t0 = Date.now(); let ids = collectErrorQids(); while (!ids.length && Date.now() - t0 < waitForQidsMs) { await delay(150); ids = collectErrorQids(); } return ids; };
+
+
+// async function handleSubmitErrors({ tokensForWidget = [], maxLoops = 6, waitForQidsMs = 4500 } = {}) {
+//   const waitIds = async () => { const t0 = Date.now(); let ids = collectErrorQids(); while (!ids.length && Date.now() - t0 < waitForQidsMs) { await delay(150); ids = collectErrorQids(); } return ids; };
+//   __RESOLVING_ERRORS__ = true;
+//   try {
+//     let prevCount = Infinity, noProgress = 0;
+//     for (let loop = 0; loop < maxLoops; loop++) {
+//       const qids = await waitIds(); if (!qids.length) break;
+//       for (const qid of qids) {
+//         await gotoCardByQid(qid, { timeout: 4500, poll: 120 }); await delay(80);
+//         // allow resolver to advance if none of the options are available
+//         await resolveErrorsOnCard(tokensForWidget, { advance: true });
+//         await waitRailClearedFast(qid, { timeout: 2200 });
+//         const cur = getActiveCard(); if (cur && cardIdToQid(cur) === qid) { await waitCardCleanFast(cur, { timeout: 1800 }); }
+//         await nextFrame();
+//       }
+//       const now = collectErrorQids().length; if (now === 0) break;
+//       if (now >= prevCount) { noProgress++; if (noProgress >= 2) break; } else { noProgress = 0; }
+//       prevCount = now;
+//     }
+//     return collectErrorQids().length;
+//   } finally { __RESOLVING_ERRORS__ = false; }
+// }
+async function handleSubmitErrors({
+  tokensForWidget = [],
+  maxLoops = 6,
+  waitForQidsMs = 4500,
+  enabledDaysSet = null,
+  includeSpecialEvent = false
+} = {}) {
+    const waitIds = async () => { const t0 = Date.now(); let ids = collectErrorQids(); while (!ids.length && Date.now() - t0 < waitForQidsMs) { await delay(150); ids = collectErrorQids(); } return ids; };
+
   __RESOLVING_ERRORS__ = true;
   try {
     let prevCount = Infinity, noProgress = 0;
@@ -659,8 +793,7 @@ async function handleSubmitErrors({ tokensForWidget = [], maxLoops = 6, waitForQ
       const qids = await waitIds(); if (!qids.length) break;
       for (const qid of qids) {
         await gotoCardByQid(qid, { timeout: 4500, poll: 120 }); await delay(80);
-        // allow resolver to advance if none of the options are available
-        await resolveErrorsOnCard(tokensForWidget, { advance: true });
+        await resolveErrorsOnCard(tokensForWidget, { advance: true, enabledDaysSet, includeSpecialEvent });
         await waitRailClearedFast(qid, { timeout: 2200 });
         const cur = getActiveCard(); if (cur && cardIdToQid(cur) === qid) { await waitCardCleanFast(cur, { timeout: 1800 }); }
         await nextFrame();
@@ -672,6 +805,7 @@ async function handleSubmitErrors({ tokensForWidget = [], maxLoops = 6, waitForQ
     return collectErrorQids().length;
   } finally { __RESOLVING_ERRORS__ = false; }
 }
+
 
 /* ===================== Main loop (parent) ===================== */
 async function mainLoop(payload) {
@@ -704,7 +838,8 @@ async function mainLoop(payload) {
 
     const hasSubmitHere = !!(card.querySelector("button[class*='form-submit-button']") || document.querySelector("button[class*='form-submit-button']"));
     if (hasSubmitHere && allowSubmit && collectErrorQids().length) {
-      await handleSubmitErrors({ tokensForWidget, maxLoops: 6, waitForQidsMs: 4000 });
+      // await handleSubmitErrors({ tokensForWidget, maxLoops: 6, waitForQidsMs: 4000 });
+      await handleSubmitErrors({ tokensForWidget, maxLoops: 6, waitForQidsMs: 4000, enabledDaysSet, includeSpecialEvent });
       await delay(120);
       continue;
     }
@@ -715,7 +850,7 @@ async function mainLoop(payload) {
       const sig = buildStateSig();
       if (sig === lastSig) {
         if (Date.now() - lastSigAt > T.stuckSameSig && !__RESOLVING_ERRORS__) {
-          const ok = await rescueCurrentCard(tokensForWidget);
+          const ok = await rescueCurrentCard(tokensForWidget, enabledDaysSet, includeSpecialEvent);
           lastSigAt = Date.now();
           if (!ok) { rescueFails++; if (rescueFails >= T.hardResetAfter) { await hardResetActiveCard(); rescueFails = 0; } }
           else rescueFails = 0;
@@ -733,8 +868,9 @@ async function mainLoop(payload) {
         if (act0 === "submitted") { await delay(50); await waitErrorsReady({ timeout: T.errorsWaitMax, poll: 120 }); }
         if (act0 === "submitted" && !hasValidationErrors() && collectErrorQids().length === 0) { window.isFilling = false; break; }
         if (act0 === "submitted") {
-          const stepped = await stepIntoErrorViaPrev({ tokensForWidget, warmup: 300 }); if (stepped) { await delay(delayTime); continue; }
-          const remaining = await handleSubmitErrors({ tokensForWidget, maxLoops: 3, waitForQidsMs: 9000 });
+          const stepped = await stepIntoErrorViaPrev({ tokensForWidget, warmup: 300, enabledDaysSet, includeSpecialEvent}); if (stepped) { await delay(delayTime); continue; }
+          // const remaining = await handleSubmitErrors({ tokensForWidget, maxLoops: 3, waitForQidsMs: 9000 });
+          const remaining = await handleSubmitErrors({ tokensForWidget, maxLoops: 3, waitForQidsMs: 9000, enabledDaysSet, includeSpecialEvent });
           if (remaining === 0 && lastSubmitQid) {
             await gotoCardByQid(lastSubmitQid); await delay(300);
             const submitCard = getActiveCard(); submitCard?.querySelector("button[class*='form-submit-button']")?.click();
@@ -793,18 +929,26 @@ async function mainLoop(payload) {
     }
 
     // ==== Widget select — SINGLE by priority
-    if (checkboxTxtArr.length && hasWidgetInCard(card)) {
-      await selectWidgetOptionsInCard(card, checkboxTxtArr.flat(), 5000, { single: true });
-      await delay(120); // let VALUE/DIRTY bridge unlock NEXT
-    }
+    // if (checkboxTxtArr.length && hasWidgetInCard(card)) {
+    //   await selectWidgetOptionsInCard(card, checkboxTxtArr.flat(), 5000, { single: true });
+    //   await delay(120); // let VALUE/DIRTY bridge unlock NEXT
+    // }
 
     // Tick theo enableDays hoặc Special Event
+    // if (tokensForWidget.length && hasWidgetInCard(card) && !widgetSentForCard.has(card.id)) {
+    //   const title = getCardTitleText(card); const dayNum = extractDayFromTitle(title);
+    //   const shouldTick = (enabledDaysSet.size > 0 && dayNum != null && enabledDaysSet.has(dayNum)) || (includeSpecialEvent && isSpecialEventTitle(title));
+    //   if (shouldTick) {
+    //     await selectWidgetOptionsInCard(card, tokensForWidget, 5000, { single: true });
+    //     widgetSentForCard.add(card.id);
+    //   }
+    // }
+    // Tick theo enableDays hoặc Special Event (CHỈ tick khi pass điều kiện)
     if (tokensForWidget.length && hasWidgetInCard(card) && !widgetSentForCard.has(card.id)) {
-      const title = getCardTitleText(card); const dayNum = extractDayFromTitle(title);
-      const shouldTick = (enabledDaysSet.size > 0 && dayNum != null && enabledDaysSet.has(dayNum)) || (includeSpecialEvent && isSpecialEventTitle(title));
-      if (shouldTick) {
+      if (shouldTickCard(card, enabledDaysSet, includeSpecialEvent)) {
         await selectWidgetOptionsInCard(card, tokensForWidget, 5000, { single: true });
         widgetSentForCard.add(card.id);
+        await delay(120);
       }
     }
 
@@ -814,7 +958,7 @@ async function mainLoop(payload) {
     if (act === "submitted") {
       await delay(50); await waitErrorsReady({ timeout: T.errorsWaitMax, poll: 120 });
       if (!hasValidationErrors() && collectErrorQids().length === 0) { window.isFilling = false; break; }
-      const remaining = await handleSubmitErrors({ tokensForWidget, maxLoops: 3, waitForQidsMs: 4000 });
+      const remaining = await handleSubmitErrors({ tokensForWidget, maxLoops: 3, waitForQidsMs: 4000, enabledDaysSet, includeSpecialEvent });
       if (remaining === 0 && lastSubmitQid) {
         await gotoCardByQid(lastSubmitQid); await delay(200);
         const submitCard = getActiveCard(); submitCard?.querySelector("button[class*='form-submit-button']")?.click();

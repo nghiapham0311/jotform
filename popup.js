@@ -68,14 +68,38 @@ document.addEventListener('DOMContentLoaded', () => {
   buildDaysUI();
 
 
-  const DEFAULT_PAIRS = [{"key":"Name of your Food Truck","value":"A12345678"},{"key":"Legal Bussiness Name","value":"HCMC University of Technology"},{"key":"License Plate Number","value":"Computer Science"},{"key":"State the Truck is Register in","value":"123 Nguyen Hue, District 1"}];
+  const DEFAULT_PAIRS = [{"key":"Name of your Food Truck","value":""},{"key":"Legal Bussiness Name","value":""},{"key":"License Plate Number","value":"UB82825"},{"key":"State the Truck is Register in","value":"VA"}];
+  // NEW: default values for checkboxTxtArr / Values UI
+  const DEFAULT_VALUES = [
+    "12th st Metro full service",
+    "12th st Madison full service",
+    "12th st Madison"
+  ];
 
-  byId('firstName').value = localStorage.getItem('firstName') || 'first Name';
-  byId('lastName').value  = localStorage.getItem('lastName')  || 'last Name';
-  byId('email').value     = localStorage.getItem('email')     || 'email@domain.com';
-  byId('phone').value     = localStorage.getItem('phone')     || '0123456789';
+  // NEW: robust loader for valueList (mirrors loadEnabledDays)
+  function loadValueList() {
+    const raw = localStorage.getItem('valueList');
+    if (!raw) {
+      localStorage.setItem('valueList', JSON.stringify(DEFAULT_VALUES));
+      return DEFAULT_VALUES.slice();
+    }
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return arr;
+      localStorage.setItem('valueList', JSON.stringify(DEFAULT_VALUES));
+      return DEFAULT_VALUES.slice();
+    } catch {
+      localStorage.setItem('valueList', JSON.stringify(DEFAULT_VALUES));
+      return DEFAULT_VALUES.slice();
+    }
+  }
+
+  byId('firstName').value = localStorage.getItem('firstName') || 'Giang';
+  byId('lastName').value  = localStorage.getItem('lastName')  || 'Pham';
+  byId('email').value     = localStorage.getItem('email')     || 'camly.pnc@gmail.com';
+  byId('phone').value     = localStorage.getItem('phone')     || '5713553815';
   byId('dob').value       = localStorage.getItem('dob')       || '';
-  byId('delayTime').value = localStorage.getItem('delayTime') || '250';
+  byId('delayTime').value = localStorage.getItem('delayTime') || '200';
 
   // persist edits to those inputs
   document.querySelectorAll('#firstName, #lastName, #email, #phone, #dob, #delayTime')
@@ -109,7 +133,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const addValueBtn      = byId('add-value');              // button to add a list item
 
   // load saved simple value list (used for checkbox token matches)
-  const savedValueList = JSON.parse(localStorage.getItem('valueList') || '[]');
+  // const savedValueList = JSON.parse(localStorage.getItem('valueList') || '[]');
+  const savedValueList = loadValueList();
+
   savedValueList.forEach(v => addValueRow(v));
 
   // load saved key/value pairs [{ key, value }]
@@ -221,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // checkbox tokens: an array of arrays; UI stores a flat list, pack them 1-per group
     const checkboxTxtArr = [];
-    const list = JSON.parse(localStorage.getItem('valueList') || '[]');
+    const list = loadValueList();
     if (list.length > 0) for (const v of list) checkboxTxtArr.push(v.split(','));
     const enabledDays = [...document.querySelectorAll('#days-grid input[type=checkbox]')]
       .filter(cb => cb.checked)
