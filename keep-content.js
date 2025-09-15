@@ -4,58 +4,7 @@
  * - Khi vào error page (form-line-error / animate-shake), tự uncheck option invalid trong iframe rồi NEXT
  */
 
-
-//============== HELPERS ==============//
-// --- Day filter helpers ---
-function isSpecialEventTitle(title) {
-  return /\bspecial\s*event\b/i.test(String(title || ''));
-}
-
-// enableDays: Array<number | string>, ví dụ: [1,3] hoặc ["1","3","5-7"]
-function buildEnableDaysSet(arr) {
-  const set = new Set();
-  (Array.isArray(arr) ? arr : []).forEach(v => {
-    if (typeof v === 'number' && Number.isFinite(v)) { set.add(v); return; }
-    const s = String(v ?? '').trim();
-    if (!s) return;
-    const m = s.match(/^(\d+)\-(\d+)$/);        // range "5-7"
-    if (m) {
-      let a = +m[1], b = +m[2]; if (a > b) [a, b] = [b, a];
-      for (let i = a; i <= b; i++) set.add(i);
-    } else {
-      const n = parseInt(s, 10);
-      if (!Number.isNaN(n)) set.add(n);
-    }
-  });
-  return set;  // size === 0 -> không tick card nào
-}
-
-function getCardTitleText(card) {
-  const el =
-    card.querySelector('.jsQuestionLabelContainer') ||
-    card.querySelector('.jfQuestion-label, .jf-question-label, .form-label, [id^="label_"]');
-  return (el?.textContent || '').trim();
-}
-
-function extractDayFromTitle(title) {
-  // Lấy số ngày trong tháng ở cuối title. Hỗ trợ "1", "01", "1st/2nd/3rd/4th"
-  const m = String(title || '').trim().match(/(\d{1,2})(?:st|nd|rd|th)?\s*$/i);
-  return m ? parseInt(m[1], 10) : null;
-}
-
-/** true nếu card được phép theo enableDays */
-function isCardEnabledByDays(card, enableDaysSpec) {
-  const set = parseDaysSpec(enableDaysSpec);   // null => không lọc
-  if (set === null) return true;
-  const title = getCardTitleText(card);
-  const n = extractDayFromTitle(title);
-  // Nếu không phải card "Day N" thì coi như không bật
-  return n != null && set.has(n);
-}
-
-//================= END HELPERS =================//
-
-/* ===== Tiny utils ===== */
+/* ===================== Tiny utils ===================== */
 const qs = (s, r = document) => r.querySelector(s);
 const qsa = (s, r = document) => Array.from(r.querySelectorAll(s));
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
@@ -65,13 +14,6 @@ const IS_IFRAME = /\.jotform\.io$/.test(location.host);
 
 const norm = (s) => String(s || "").toLowerCase().trim();
 const slug = (s) => norm(s).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-
-// emit input/change events helper
-function emitInputChange(el) {
-    if (!el) return;
-    try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch { }
-    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch { }
-}
 
 /* ===================== Visibility / Disabled ===================== */
 function isVisible(el) {
@@ -111,7 +53,8 @@ function fillInto(comp, part, val) {
     if ((el.value || "") === String(val)) return true;
     el.focus();
     el.value = String(val);
-    emitInputChange(el);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
     el.blur();
     return true;
 }
@@ -123,11 +66,11 @@ function setValueWithEvents(el, val) {
         el.setSelectionRange(0, (el.value || "").length);
         el.setRangeText("", 0, (el.value || "").length, "end");
     } catch { }
-    try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch { }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
     el.value = val;
     try { el.setSelectionRange(String(val).length, String(val).length); } catch { }
-    try { el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertFromPaste", data: String(val) })); } catch { }
-    emitInputChange(el);
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertFromPaste", data: String(val) }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
     el.blur();
 }
 async function fillMaskedPhone(comp, phoneStr) {
@@ -165,7 +108,7 @@ function setLiteDate(fieldId, y, m, d) {
     if (fmt === "yyyymmdd") text = `${y}${sep}${m}${sep}${d}`;
     field.value = text;
     const iso = qs(`#input_${fieldId}`); if (iso) iso.value = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    const ev = new CustomEvent("date:changed", { bubbles: true, cancelable: true, detail: { fieldId } });
+    const ev = document.createEvent("HTMLEvents"); ev.initEvent("dataavailable", true, true); ev.eventName = "date:changed";
     qs(`#id_${fieldId}`)?.dispatchEvent(ev);
     return true;
 }
@@ -358,13 +301,14 @@ function waitForWidgetIframeInComp(comp, { appearTimeout = 4000, loadTimeout = 4
     });
 }
 
+/* ===== Parent → Iframe: SELECT (giữ nguyên logic chọn) ===== */
 async function selectWidgetOptionsInCard(card, tokens = [], timeout = 4000) {
     const comps = getWidgetComponents(card);
     if (!comps.length || !tokens?.length) return false;
     let changed = false;
 
     for (const comp of comps) {
-    const iframe = await waitForWidgetIframeInComp(comp, { appearTimeout: 1000, loadTimeout: 1200 });
+        const iframe = await waitForWidgetIframeInComp(comp, { appearTimeout: 1500, loadTimeout: 1500 });
         if (!iframe) continue;
 
         const win = iframe.contentWindow;
@@ -385,12 +329,12 @@ async function selectWidgetOptionsInCard(card, tokens = [], timeout = 4000) {
         window.addEventListener("message", onMsg);
 
         try { win.postMessage({ type: "JF_WIDGET_PING" }, origin); } catch { }
-    // fallback: gửi SELECT sớm
-    setTimeout(() => { try { win.postMessage({ type: "JF_WIDGET_SELECT", tokens }, origin); } catch { } }, 80);
+        // fallback: gửi SELECT sớm
+        setTimeout(() => { try { win.postMessage({ type: "JF_WIDGET_SELECT", tokens }, origin); } catch { } }, 120);
 
         const t0 = Date.now();
         while (!done && Date.now() - t0 < timeout) {
-            await delay(180);
+            await delay(250);
             try { win.postMessage({ type: "JF_WIDGET_PING" }, origin); } catch { }
         }
         window.removeEventListener("message", onMsg);
@@ -418,7 +362,7 @@ async function nudgeWidgetDirtyInCard(card, timeout = 1500) {
     let nudged = false;
 
     for (const comp of comps) {
-    const iframe = await waitForWidgetIframeInComp(comp, { appearTimeout: 900, loadTimeout: 1000 });
+        const iframe = await waitForWidgetIframeInComp(comp, { appearTimeout: 1000, loadTimeout: 1000 });
         if (!iframe) continue;
         const win = iframe.contentWindow;
         let origin = "*"; try { origin = new URL(iframe.src).origin; } catch { }
@@ -437,14 +381,15 @@ async function nudgeWidgetDirtyInCard(card, timeout = 1500) {
 
         const t0 = Date.now();
         while (!done && Date.now() - t0 < timeout) {
-            await delay(120);
+            await delay(140);
             try { win.postMessage({ type: 'JF_WIDGET_PING' }, origin); } catch { }
         }
         window.removeEventListener('message', onMsg);
 
-    // nudge hidden
-    const hidden = comp.querySelector('input[type="hidden"], textarea');
-    emitInputChange(hidden);
+        // nudge hidden
+        const hidden = comp.querySelector('input[type="hidden"], textarea');
+        hidden?.dispatchEvent(new Event('input', { bubbles: true }));
+        hidden?.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
     return nudged;
@@ -466,9 +411,7 @@ async function clearInvalidAndUnlockNext(card, timeout = 1800, { unlock = false 
     return ok;
 }
 
-/* ===================== Iframe logic (
-+ CLEAR-INVALID) ===================== */
-
+/* ===================== Iframe logic (SELECT + CLEAR-INVALID) ===================== */
 function waitWidgetReady(maxTime = 5000) {
     return new Promise((resolve) => {
         const ok = () => document.querySelector("#gr_list label.checkbox, #checklist label.checkbox, ul.checklist label.checkbox");
@@ -493,18 +436,6 @@ function isLabelUnavailable(lab) {
     const badge = lab.parentElement?.querySelector(".items-left, span.items-left");
     const t = (badge?.textContent || "").toLowerCase();
     return t.includes("none") || /\b0\s*available\b/.test(t);
-}
-
-// simulate a realistic pointer sequence on an element
-function pointerSeq(node) {
-    if (!node) return;
-    try {
-        const opts = { bubbles: true, cancelable: true, view: window };
-        node.dispatchEvent(new MouseEvent('pointerdown', opts));
-        node.dispatchEvent(new MouseEvent('mousedown', opts));
-        node.dispatchEvent(new MouseEvent('mouseup', opts));
-        node.dispatchEvent(new MouseEvent('click', opts));
-    } catch { try { node.click(); } catch { } }
 }
 
 /* giữ nguyên SELECT nhanh theo DOM của bạn */
@@ -551,48 +482,6 @@ function clickWidgetByTokens(tokens = [], root = document) {
     return anyChanged;
 }
 
-// NEW: chọn đúng 1 option theo thứ tự tokens
-function clickWidgetFirstAvailable(tokens = [], root = document) {
-  const list = root.querySelector('#gr_list, #checklist, ul.checklist');
-  if (!list) return { changed: false, picked: null };
-
-  const norm = (s) => String(s || '').trim().toLowerCase();
-  const wanted = (tokens || []).map(norm).filter(Boolean);
-
-  // build danh sách option
-  const labels = Array.from(list.querySelectorAll('label.checkbox'));
-  const options = labels.map(lab => {
-    const text = norm(lab.textContent);
-    const forId = norm(lab.getAttribute('for'));
-    const input = forId ? document.getElementById(forId) : null;
-    return { lab, text, forId, input };
-  });
-
-  for (const tok of wanted) {
-    // tìm những option match token này
-    const matches = options.filter(o => o.text.includes(tok) || (o.forId && o.forId === tok));
-    for (const o of matches) {
-      // bỏ qua item hết hàng/disabled/đã checked
-      if (isWidgetLabelDisabled(o.lab)) continue;
-      if (o.input && (o.input.disabled || o.input.checked)) continue;
-
-      // click
-      const target = o.input || o.lab;
-      target.scrollIntoView({ block: 'center' });
-      dispatchMouseSeq(o.lab);
-      if (o.input) {
-        dispatchMouseSeq(o.input);
-        if (!o.input.checked) o.input.checked = true;
-        o.input.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-      return { changed: true, picked: tok };
-    }
-    // không có option nào phù hợp/available cho token này → thử token tiếp
-  }
-
-  return { changed: false, picked: null };
-}
-
 if (IS_IFRAME && !window.__JF_IFRAME_READY__) {
     window.__JF_IFRAME_READY__ = true;
     window.addEventListener("message", async (ev) => {
@@ -622,43 +511,33 @@ if (IS_IFRAME && !window.__JF_IFRAME_READY__) {
             return;
         }
 
-        // CLEAR-INVALID: uncheck options that are clearly unavailable (line-through/None/0 available)
-    if (data.type === "JF_WIDGET_RESOLVE" && (data.mode === "clear-invalid" || !data.mode)) {
+        // CLEAR-INVALID: uncheck các option invalid (line-through/None/0 available) — không chọn mới
+        if (data.type === "JF_WIDGET_RESOLVE" && data.mode === "clear-invalid") {
             await waitWidgetReady(4000);
             const list = listRoot(document);
             let fixed = false;
             if (list) {
-                const checked = Array.from(list.querySelectorAll('input[type="checkbox"][id]:checked'));
-                for (const input of checked) {
+                for (const input of list.querySelectorAll('input[type="checkbox"][id]:checked')) {
                     const lab = labelFor(input, document);
                     if (!isLabelUnavailable(lab)) continue;
-                    // try realistic interactions
-                    try { pointerSeq(lab || input); } catch { }
-                    try { (lab || input).click(); } catch { }
-                    await delay(60);
-
-                    // if still checked, force toggle and dispatch events
+                    (lab || input).click();
                     if (input.checked) {
-                        try { input.checked = false; input.setAttribute('aria-checked', 'false'); } catch { }
-                        try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch { }
-                        try { input.dispatchEvent(new Event('change', { bubbles: true })); } catch { }
+                        input.checked = false;
+                        input.dispatchEvent(new Event("input", { bubbles: true }));
+                        input.dispatchEvent(new Event("change", { bubbles: true }));
                     }
-
-                    if (!input.checked) fixed = true;
+                    fixed = true;
                 }
-
                 if (fixed) {
-                    try { list.dispatchEvent(new Event('input', { bubbles: true })); } catch { }
-                    try { list.dispatchEvent(new Event('change', { bubbles: true })); } catch { }
-                    try { document.dispatchEvent(new Event('input', { bubbles: true })); } catch { }
-                    try { document.dispatchEvent(new Event('change', { bubbles: true })); } catch { }
+                    list.dispatchEvent(new Event("input", { bubbles: true }));
+                    list.dispatchEvent(new Event("change", { bubbles: true }));
+                    document.dispatchEvent(new Event("change", { bubbles: true }));
                 }
             }
-
             const values = Array.from(list?.querySelectorAll('input[type="checkbox"][id]:checked') || []).map(i => (i.value || i.id || '').trim());
-            try { ev.source.postMessage({ type: 'JF_WIDGET_VALUE', values, value: values.join(', ') }, ev.origin || '*'); } catch { }
-            try { ev.source.postMessage({ type: 'JF_WIDGET_VALUE_DIRTY' }, ev.origin || '*'); } catch { }
-            try { ev.source.postMessage({ type: 'JF_WIDGET_RESOLVED', fixed }, ev.origin || '*'); } catch { }
+            try { ev.source.postMessage({ type: "JF_WIDGET_VALUE", values, value: values.join(", ") }, ev.origin || "*"); } catch { }
+            try { ev.source.postMessage({ type: "JF_WIDGET_VALUE_DIRTY" }, ev.origin || "*"); } catch { }
+            try { ev.source.postMessage({ type: "JF_WIDGET_RESOLVED", fixed }, ev.origin || "*"); } catch { }
             return;
         }
     }, false);
@@ -789,31 +668,6 @@ async function smartNextOrSubmit(card, allowSubmit, tokensForWidget = []) {
     return null;
 }
 
-if (IS_IFRAME && !window.__JF_IFRAME_READY__) {
-  window.__JF_IFRAME_READY__ = true;
-  window.addEventListener('message', async (ev) => {
-    const data = ev.data || {};
-    if (data.type === 'JF_WIDGET_PING') {
-      ev.source.postMessage({ type: 'JF_WIDGET_PONG' }, ev.origin || "*");
-      return;
-    }
-    if (data.type !== 'JF_WIDGET_SELECT') return;
-    await waitWidgetReady(5000);
-
-    let result = { changed: false, picked: null };
-    if (data.single) {
-      result = clickWidgetFirstAvailable(data.tokens || [], document);
-    } else {
-      // fallback cũ: tick tất (nếu cần)
-      const changed = clickWidgetByTokens(data.tokens || [], document);
-      result = { changed, picked: null };
-    }
-
-    document.dispatchEvent(new Event('change', { bubbles: true }));
-    ev.source.postMessage({ type: 'JF_WIDGET_SELECTED', changed: !!result.changed, picked: result.picked }, ev.origin || "*");
-  }, false);
-}
-
 
 // ===== Observer-based wait helpers =====
 function getRailEl() { return qs('#cardProgress'); }
@@ -879,6 +733,7 @@ function waitWithObserver(target, { predicate, timeout = 2000 }) {
             }
         });
         obs.observe(target, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'aria-invalid'] });
+
         const t = setTimeout(() => { obs.disconnect(); resolve(predicate?.() || false); }, timeout);
     });
 }
@@ -911,22 +766,10 @@ async function resolveErrorsOnCard(tokensForWidget = [], { advance = false } = {
     const card = getActiveCard(); if (!card) return false;
     const qid = cardIdToQid(card);
 
-    // resolved debug logs removed
-
-    // run clearInvalid path when either the card shows a line error OR the rail reports the qid as errored
-    const railHas = collectErrorQids().indexOf(qid) !== -1;
-    if (hasWidgetInCard(card) && (hasLineErrorInCard(card) || railHas)) {
-        // try multiple attempts as some widgets need repeated nudges
-        for (let i = 0; i < 3; i++) {
-            const ok = await clearInvalidAndUnlockNext(card, 1400, { unlock: false });
-            if (ok) {
-                await waitCardCleanFast(card, { timeout: T.cardCleanTimeout });
-                await waitRailClearedFast(qid, { timeout: T.railTimeout });
-                break;
-            }
-            await delay(180 + i*80);
-        }
-    // clearInvalid result recorded
+    if (hasWidgetInCard(card) && hasLineErrorInCard(card)) {
+        await clearInvalidAndUnlockNext(card, 1400, { unlock: false });
+        await waitCardCleanFast(card, { timeout: T.cardCleanTimeout });
+        await waitRailClearedFast(qid, { timeout: T.railTimeout });
     }
 
     tryAgreeToggles(card);
@@ -997,18 +840,6 @@ async function mainLoop(payload) {
     const inputTxtArr = Array.isArray(payload.inputTxtArr) ? payload.inputTxtArr : [];
     const checkboxTxtArr = Array.isArray(payload.checkboxTxtArr) ? payload.checkboxTxtArr : [];
     const tokensForWidget = checkboxTxtArr.flat();
-  
-    const inputTxtArr = Array.isArray(payload.inputTxtArr) ? payload.inputTxtArr : [];
-    const checkboxTxtArr = Array.isArray(payload.checkboxTxtArr) ? payload.checkboxTxtArr : [];
-    const tokensForWidget = checkboxTxtArr.flat();
-    // NEW: đọc array (ưu tiên enableDays / enabledays / enable_days)
-    const enabledDaysSet = buildEnableDaysSet(
-      payload.enabledDays ?? payload.enableddays ?? payload.enabled_days ?? []
-    );
-
-    const includeSpecialEvent = !!(payload.includeSpecialEvent ?? payload.includeSpecialDay);
-
-    const widgetSentForCard = new Set();
 
     let started = false, lastCardId = "";
     let lastSubmitQid = null;
@@ -1162,20 +993,6 @@ async function mainLoop(payload) {
         if (checkboxTxtArr.length && hasWidgetInCard(card)) {
             await selectWidgetOptionsInCard(card, checkboxTxtArr.flat(), 5000);
             await delay(120); // cho bridge VALUE/ DIRTY unlock NEXT
-        }
-        
-          if (tokensForWidget.length && hasWidgetInCard(card) && !widgetSentForCard.has(card.id)) {
-            const dayNum = extractDayFromTitle(getCardTitleText(card));
-            const title  = getCardTitleText(card);
-            // chỉ tick nếu title parse được "Day N" và N nằm trong enableDaysSet
-              const shouldTick =
-            (dayNum != null && enabledDaysSet.has(dayNum)) ||
-            (includeSpecialEvent && isSpecialEventTitle(title));
-
-            if (shouldTick) {
-              await selectWidgetOptionsInCard(card, tokensForWidget, 5000);
-              widgetSentForCard.add(card.id);
-            }
         }
 
         // ==== Next / Submit
