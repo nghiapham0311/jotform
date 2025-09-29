@@ -12,23 +12,48 @@ fs.ensureDirSync(backupDir);
 
 // LIGHT options: gần như giữ nguyên logic, không đổi global, không encode string, không self-defend
 const options = {
-  compact: true,                        // remove whitespace
-  controlFlowFlattening: false,         // KHÔNG flatten → giữ ổn định
+  compact: true,
+  controlFlowFlattening: false,
   deadCodeInjection: false,
   debugProtection: false,
   selfDefending: false,
-  disableConsoleOutput: false,          // giữ console
-  identifierNamesGenerator: 'hexadecimal', // ngắn gọn, rối mắt
-  renameGlobals: false,                 // KHÔNG đổi tên global (chrome, window, self,...)
-  stringArray: false,                   // KHÔNG mã hóa chuỗi (giữ tương tác message safe)
+  disableConsoleOutput: false,
+
+  // ổn định hơn với stacktrace; nếu muốn ngắn hơn có thể để 'hexadecimal'
+  identifierNamesGenerator: 'mangled',
+
+  renameGlobals: false,
+  stringArray: false,
   transformObjectKeys: false,
-  seed: 2025,                           // cố định kết quả giữa các lần build
-  // giữ các tên global quan trọng để không bị đổi
+
+  // tránh tối ưu hóa làm đổi side-effects/timing
+  simplify: false,
+
+  // để test: có map lần ra lỗi; build release thì tắt 2 dòng này
+  sourceMap: true,
+  sourceMapMode: 'separate',
+
+  seed: 2025,
+
+  // GIỮ NGUYÊN các tên này (rất quan trọng)
   reservedNames: [
-    '^chrome$', '^browser$', '^window$', '^self$', '^globalThis$', '^document$', '^console$',
-    '^__webpack_require__$'
+    // browser & core
+    '^window$', '^self$', '^globalThis$', '^document$', '^console$', '^location$',
+    '^Event$', '^CustomEvent$', '^InputEvent$', '^MouseEvent$', '^PointerEvent$',
+    '^requestAnimationFrame$', '^setTimeout$', '^clearTimeout$', '^CSS$',
+
+    // extension
+    '^chrome$', '^browser$',
+
+    // bundler
+    '^__webpack_require__$',
+
+    // cờ/contract của bạn
+    '^__JF_PARENT_BRIDGE__$', '^__JF_IFRAME_READY__$',
+
+    // nếu có nơi khác gọi tên hàm theo string, giữ luôn:
+    '^mainLoop$', '^shouldTickCard$', '^selectWidgetOptionsInCard$'
   ],
-  // Kích thước output lớn/nhỏ do compact + mangling
 };
 
 (async () => {
