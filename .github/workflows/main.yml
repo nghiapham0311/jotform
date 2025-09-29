@@ -33,18 +33,18 @@ jobs:
       - name: Prepare release zip (exclude dev folders)
         run: |
           set -e
-          RM=release.zip
+          RM=ktform.zip
           # remove previous artifact if any
           if [ -f "$RM" ]; then rm -f "$RM"; fi
 
           # Create zip of repo root but exclude common unwanted folders/files.
           # Adjust --exclude patterns if you want different excludes.
-          zip -r "$RM" . -x "node_modules/*" ".git/*" ".github/*" "release.zip" "release.zip" "backup_obf*" "backup_before_edit/*" "dist_release/*"
+          zip -r "$RM" . -x "node_modules/*" ".git/*" ".github/*" "ktform.zip" "ktform.zip" "backup_obf*" "backup_before_edit/*" "dist_release/*"
 
           echo "Created $RM"
 
       - name: Upload obfuscated artifact
         uses: actions/upload-artifact@v4
         with:
-          name: obfuscated-release
-          path: release.zip
+          name: ktform-release
+          path: ktform.zip
