@@ -51,8 +51,8 @@ document.addEventListener('DOMContentLoaded', () => {
     for (let d = 1; d <= DAY_COUNT; d++) {
       const id = `af-day-${d}`;
       const wrap = document.createElement('label');
-      const cb   = document.createElement('input');
-      const sp   = document.createElement('span');
+      const cb = document.createElement('input');
+      const sp = document.createElement('span');
       cb.type = 'checkbox';
       cb.id = id;
       cb.dataset.day = String(d);
@@ -68,7 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
   buildDaysUI();
 
 
-  const DEFAULT_PAIRS = [{"key":"Name of your Food Truck","value":""},{"key":"Legal Bussiness Name","value":""},{"key":"License Plate Number","value":"UB82825"},{"key":"State the Truck is Register in","value":"VA"}];
+  const DEFAULT_PAIRS = [{ "key": "Name of your Food Truck", "value": "" }, { "key": "Legal Bussiness Name", "value": "" }, { "key": "License Plate Number", "value": "UB82825" }, { "key": "State the Truck is Register in", "value": "VA" }];
   // NEW: default values for checkboxTxtArr / Values UI
   const DEFAULT_VALUES = [
     "12th st Metro full service",
@@ -95,11 +95,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   byId('firstName').value = localStorage.getItem('firstName') || 'Giang';
-  byId('lastName').value  = localStorage.getItem('lastName')  || 'Pham';
-  byId('email').value     = localStorage.getItem('email')     || 'camly.pnc@gmail.com';
-  byId('phone').value     = localStorage.getItem('phone')     || '5713553815';
-  byId('dob').value       = localStorage.getItem('dob')       || '';
-  byId('delayTime').value = localStorage.getItem('delayTime') || '200';
+  byId('lastName').value = localStorage.getItem('lastName') || 'Pham';
+  byId('email').value = localStorage.getItem('email') || 'camly.pnc@gmail.com';
+  byId('phone').value = localStorage.getItem('phone') || '5713553815';
+  byId('dob').value = localStorage.getItem('dob') || '';
+  byId('delayTime').value = localStorage.getItem('delayTime') || '0';
 
   // persist edits to those inputs
   document.querySelectorAll('#firstName, #lastName, #email, #phone, #dob, #delayTime')
@@ -108,8 +108,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }));
 
   const startBtn = byId('start');
-  const stopBtn  = byId('stop');
-  const status   = byId('statusMessage');
+  const stopBtn = byId('stop');
+  const status = byId('statusMessage');
 
   // submitForm toggle (checkbox)
   const submitFormToggle = byId('submitForm');
@@ -122,15 +122,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // reflect isRunning state
   chrome.storage.local.get(['isRunning'], ({ isRunning }) => {
     startBtn.disabled = !!isRunning;
-    stopBtn.disabled  = !isRunning;
-    status.innerText  = isRunning ? 'Working...' : 'Ready...';
+    stopBtn.disabled = !isRunning;
+    status.innerText = isRunning ? 'Working...' : 'Ready...';
   });
 
   // ----- dynamic key/value text mapping (for input-textbox by label) -----
-  const pairsContainer   = byId('pairs-container');        // where pairs appear
-  const addPairBtn       = byId('add-pair');               // button to add a pair
-  const valuesContainer  = byId('values-container');       // simple list values editor
-  const addValueBtn      = byId('add-value');              // button to add a list item
+  const pairsContainer = byId('pairs-container');        // where pairs appear
+  const addPairBtn = byId('add-pair');               // button to add a pair
+  const valuesContainer = byId('values-container');       // simple list values editor
+  const addValueBtn = byId('add-value');              // button to add a list item
 
   // load saved simple value list (used for checkbox token matches)
   // const savedValueList = JSON.parse(localStorage.getItem('valueList') || '[]');
@@ -229,8 +229,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // ----- start/stop -----
   startBtn.addEventListener('click', () => {
     startBtn.disabled = true;
-    stopBtn.disabled  = false;
-    status.innerText  = 'Working...';
+    stopBtn.disabled = false;
+    status.innerText = 'Working...';
     console.log('Start button clicked.');
 
     const [y, m, d] = (byId('dob').value || '').split('-').map(n => parseInt(n, 10));
@@ -256,9 +256,9 @@ document.addEventListener('DOMContentLoaded', () => {
     localStorage.setItem('enabledDays', JSON.stringify(enabledDays));
     const payload = {
       firstName: byId('firstName').value,
-      lastName : byId('lastName').value,
-      email    : byId('email').value,
-      phone    : byId('phone').value,
+      lastName: byId('lastName').value,
+      email: byId('email').value,
+      phone: byId('phone').value,
       delayTime: byId('delayTime').value,
       year: y || 0, month: m || 0, day: d || 0,
       submitForm: submitFormToggle.checked,
@@ -277,9 +277,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   stopBtn.addEventListener('click', () => {
-    stopBtn.disabled  = true;
+    stopBtn.disabled = true;
     startBtn.disabled = false;
-    status.innerText  = 'Ready...';
+    status.innerText = 'Ready...';
     console.log('Stop button clicked.');
 
     chrome.storage.local.set({ isRunning: false });
