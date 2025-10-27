@@ -1,6 +1,6 @@
 {
     "manifest_version": 3,
-    "name": "Jotform autofill",
+    "name": "KT Form",
     "version": "1.0",
     "description": "Automatically fill forms with predefined data.\nCopyright ©  2014 FB.com/100004518225124",
     "action": {
