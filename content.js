@@ -245,7 +245,6 @@ function waitForWidgetIframeInComp(comp, { appearTimeout = 500, loadTimeout = 80
       return;
     }
 
-    // declare observer first so the timeout handler can safely reference it
     let observer = null;
     const appearTimeoutId = setTimeout(() => { if (observer) observer.disconnect(); resolve(null); }, appearTimeout);
 
@@ -268,67 +267,70 @@ function waitForWidgetIframeInComp(comp, { appearTimeout = 500, loadTimeout = 80
   });
 }
 
-/** Parent → Iframe selection; returns {changed, picked} */
-async function selectWidgetOptionsInCard(card, tokens = [], timeout = 1200, { single = true } = {}) {
+/* ===================== PERF-UPGRADE: Parent → Iframe select via MessageChannel ===================== */
+/** Parent → Iframe selection; returns {changed, picked} — FAST */
+async function selectWidgetOptionsInCard(card, tokens = [], timeout = 900, { single = true } = {}) {
   if (!card || !tokens?.length) return { changed: false, picked: null };
 
   const comps = getWidgetComponents(card);
   if (!comps.length) return { changed: false, picked: null };
 
-  let changed = false, picked = null;
-
-  const results = await Promise.all(comps.map(async comp => {
-    const iframe = await waitForWidgetIframeInComp(comp, { appearTimeout: 500, loadTimeout: 800 });
+  const tasks = comps.map(async comp => {
+    const iframe = await waitForWidgetIframeInComp(comp, { appearTimeout: 250, loadTimeout: 500 });
     if (!iframe) return null;
 
-    const win = iframe.contentWindow;
     const origin = (() => { try { return new URL(iframe.src).origin; } catch { return "*"; } })();
 
     return new Promise(resolve => {
-      let messageTimeout;
-      const kill = () => { window.removeEventListener("message", onMsg); clearTimeout(messageTimeout); };
+      const ch = new MessageChannel();
+      let settled = false;
+      const finish = (res) => { if (!settled) { settled = true; resolve(res); } };
 
-      const onMsg = (ev) => {
-        if (ev.source !== win) return;
-        const data = ev.data || {};
-        if (data.type === "JF_WIDGET_PONG") {
-          // Widget is alive; it already received SELECT below.
-          return;
-        } else if (data.type === "JF_WIDGET_SELECTED") {
-          kill(); resolve({ changed: !!data.changed, picked: data.picked });
+      const t = setTimeout(() => { try { ch.port1.close(); } catch { } finish(null); }, timeout);
+
+      ch.port1.onmessage = (e) => {
+        const d = e.data || {};
+        if (d.type === "JF_WIDGET_SELECTED") {
+          clearTimeout(t);
+          try { ch.port1.close(); } catch { }
+          finish({ changed: !!d.changed, picked: d.picked ?? null });
         }
       };
 
-      window.addEventListener("message", onMsg);
-
-      // Shorter handshake: send PING + SELECT immediately (no 50ms wait)
-      try { win.postMessage({ type: "JF_WIDGET_PING" }, origin); } catch { }
-      try { win.postMessage({ type: "JF_WIDGET_SELECT", tokens, single }, origin); } catch { }
-
-      messageTimeout = setTimeout(() => { kill(); resolve(null); }, Math.min(timeout, 1200));
+      try {
+        iframe.contentWindow.postMessage(
+          { type: "JF_WIDGET_SELECT_FAST", tokens, single },
+          origin,
+          [ch.port2]
+        );
+      } catch {
+        clearTimeout(t);
+        try { ch.port1.close(); } catch { }
+        finish(null);
+      }
     });
-  }));
-
-  results.filter(Boolean).forEach(result => {
-    if (result) {
-      changed = changed || result.changed;
-      if (picked == null && result.picked != null) picked = result.picked;
-    }
   });
 
+  const results = await Promise.all(tasks);
+  const firstGood = results.find(r => r && r.picked != null);
+  if (firstGood) return firstGood;
+
+  let changed = false, picked = null;
+  for (const r of results) { if (r) { changed = changed || r.changed; picked ??= r.picked; } }
   return { changed, picked };
 }
 
 /* ===== Parent → Iframe: NUDGE/CLEAR-INVALID ===== */
 let __RESOLVING_ERRORS__ = false;
 let __WATCHDOG_ENABLED__ = true;
-const T = { tick: 80, nextWait: 320, railTimeout: 2200, cardCleanTimeout: 1800, errorsWaitMax: 4500, stuckSameSig: 3000, hardResetAfter: 3 };
+// tightened timings for snappier progress
+const T = { tick: 60, nextWait: 240, railTimeout: 1800, cardCleanTimeout: 1200, errorsWaitMax: 3500, stuckSameSig: 1800, hardResetAfter: 2 };
 
-async function nudgeWidgetDirtyInCard(card, timeout = 1200) {
+async function nudgeWidgetDirtyInCard(card, timeout = 900) {
   const comps = getWidgetComponents(card); if (!comps.length) return false;
   let nudged = false;
   for (const comp of comps) {
-    const iframe = await waitForWidgetIframeInComp(comp, { appearTimeout: 500, loadTimeout: 800 }); if (!iframe) continue;
+    const iframe = await waitForWidgetIframeInComp(comp, { appearTimeout: 250, loadTimeout: 500 }); if (!iframe) continue;
     const win = iframe.contentWindow; let origin = "*"; try { origin = new URL(iframe.src).origin; } catch { }
     let done = false;
     const onMsg = (ev) => {
@@ -338,15 +340,15 @@ async function nudgeWidgetDirtyInCard(card, timeout = 1200) {
     };
     window.addEventListener('message', onMsg);
     try { win.postMessage({ type: 'JF_WIDGET_PING' }, origin); } catch { }
-    setTimeout(() => { try { win.postMessage({ type: 'JF_WIDGET_RESOLVE', mode: 'clear-invalid' }, origin); } catch { } }, 30);
+    setTimeout(() => { try { win.postMessage({ type: 'JF_WIDGET_RESOLVE', mode: 'clear-invalid' }, origin); } catch { } }, 10);
     const t0 = Date.now();
-    while (!done && Date.now() - t0 < timeout) { await delay(100); try { win.postMessage({ type: 'JF_WIDGET_PING' }, origin); } catch { } }
+    while (!done && Date.now() - t0 < timeout) { await delay(80); try { win.postMessage({ type: 'JF_WIDGET_PING' }, origin); } catch { } }
     window.removeEventListener('message', onMsg);
     const hidden = comp.querySelector('input[type="hidden"], textarea'); emitInputChange(hidden);
   }
   return nudged;
 }
-async function clearInvalidAndUnlockNext(card, timeout = 1200, { unlock = true } = {}) {
+async function clearInvalidAndUnlockNext(card, timeout = 900, { unlock = true } = {}) {
   const ok = await nudgeWidgetDirtyInCard(card, timeout);
   if (ok && unlock) {
     card.querySelectorAll(".jfCard-actionsNotification .form-error-message, .form-button-error").forEach(n => n.remove());
@@ -393,7 +395,6 @@ function clickWidgetByTokens(tokens = [], root = document) {
   const want = (tokens || []).map(t => String(t || '').toLowerCase().trim()).filter(Boolean); if (!want.length) return false;
   let anyChanged = false;
 
-  // Fast path: use built index if available (iframe side)
   const W = window.__WIDX__;
   if (W) {
     W.ensure();
@@ -407,7 +408,6 @@ function clickWidgetByTokens(tokens = [], root = document) {
       const rec = W.mapById.get(id);
       if (!rec || !rec.input || rec.input.disabled || isLabelUnavailable(rec.label)) continue;
       if (!want.some(t => rec.text.includes(t) || id.toLowerCase() === t)) continue;
-      // click/select
       const before = rec.input.checked;
       try { rec.label.click(); } catch { try { rec.input.click(); } catch { } }
       if (!rec.input.checked) { rec.input.checked = true; rec.input.setAttribute('aria-checked', 'true'); }
@@ -419,7 +419,6 @@ function clickWidgetByTokens(tokens = [], root = document) {
     return anyChanged;
   }
 
-  // Fallback: simple scan (keeps behavior but slightly optimized)
   const items = list.querySelectorAll("li.list-item");
   for (const li of items) {
     const input = li.querySelector('input[type="checkbox"][id]'); if (!input) continue;
@@ -441,27 +440,36 @@ function clickWidgetByTokens(tokens = [], root = document) {
   return anyChanged;
 }
 
-/* ===================== FAST INDEX (IFRAME SIDE) ===================== */
-/* Builds once per iframe; used by clickWidgetFirstAvailable */
+/* ===================== FAST INDEX (IFRAME SIDE) — upgraded ===================== */
 (function initWidgetIndex() {
   if (!IS_IFRAME) return;
   if (window.__WIDX__) return;
-  window.__WIDX__ = {
+
+  const W = window.__WIDX__ = {
     version: 0,
-    mapById: new Map(),       // forId -> {input,label,text,forId}
-    tokensToIds: new Map(),   // token -> Set(forId)
     builtAt: 0,
+    list: null,
+    mapById: new Map(),       // id -> {input,label,text,slug}
+    tokensToIds: new Map(),   // token -> Set(id)
+    slugToId: new Map(),      // slug -> id
     ensure() { if (!this.builtAt) buildIndex(); },
-    getList() { return document.querySelector(LIST_SEL); }
+    getList() { return this.list || (this.list = document.querySelector(LIST_SEL)); }
   };
 
   const normalize = s => String(s || '').toLowerCase().trim();
-  const list = document.querySelector(LIST_SEL);
+  const toSlug = s => normalize(s).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  function stripBadgesFromLabel(lab) {
+    if (!lab) return "";
+    const clone = lab.cloneNode(true);
+    clone.querySelectorAll(".items-left, span.items-left, .badge").forEach(n => n.remove());
+    return (clone.textContent || "").toLowerCase().trim();
+  }
 
   function buildIndex() {
-    const W = window.__WIDX__;
+    const list = W.getList();
     W.mapById.clear();
     W.tokensToIds.clear();
+    W.slugToId.clear();
 
     if (!list) { W.version++; W.builtAt = Date.now(); return; }
 
@@ -470,29 +478,33 @@ function clickWidgetByTokens(tokens = [], root = document) {
       const forId = lab.getAttribute('for');
       const input = document.getElementById(forId);
       if (!input) continue;
-      const text = normalize(lab.textContent);
-      const rec = { input, label: lab, text, forId };
-      W.mapById.set(forId, rec);
+
+      const text = stripBadgesFromLabel(lab);
+      const slug = toSlug(forId);
+
+      W.mapById.set(forId, { input, label: lab, text, slug });
 
       const tokens = new Set(text.split(/[^a-z0-9]+/).filter(Boolean));
-      tokens.add(text); // whole string for includes pass
+      tokens.add(text);
 
       for (const t of tokens) {
         if (!W.tokensToIds.has(t)) W.tokensToIds.set(t, new Set());
         W.tokensToIds.get(t).add(forId);
       }
+      if (slug) W.slugToId.set(slug, forId);
     }
+
     W.version++; W.builtAt = Date.now();
   }
 
-  const doBuild = () => (window.requestIdleCallback ? requestIdleCallback(buildIndex, { timeout: 500 }) : setTimeout(buildIndex, 0));
-  doBuild();
+  const kick = () => (window.requestIdleCallback ? requestIdleCallback(buildIndex, { timeout: 200 }) : setTimeout(buildIndex, 0));
+  kick();
 
-  const mo = new MutationObserver(() => doBuild());
-  if (list) mo.observe(list, { childList: true, subtree: true, attributes: true });
+  const mo = new MutationObserver(() => kick());
+  mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
 })();
 
-/** SINGLE: pick first available by priority AND ensure only one remains checked (indexed) */
+/** SINGLE: pick first available by priority with O(1) exact-id/slug path */
 function clickWidgetFirstAvailable(tokens = [], root = document) {
   const W = window.__WIDX__;
   if (!W) return { changed: false, picked: null };
@@ -502,9 +514,9 @@ function clickWidgetFirstAvailable(tokens = [], root = document) {
   if (!list) return { changed: false, picked: null };
 
   const want = Array.from(new Set((tokens || []).map(t => String(t || '').toLowerCase().trim()).filter(Boolean)));
-  if (want.length === 0) return { changed: false, picked: null };
+  if (!want.length) return { changed: false, picked: null };
 
-  // Fast exact id match
+  // 1) Exact id or slug hit → constant time
   for (const tok of want) {
     if (W.mapById.has(tok)) {
       const rec = W.mapById.get(tok);
@@ -512,9 +524,16 @@ function clickWidgetFirstAvailable(tokens = [], root = document) {
         return __selectSingle(list, rec.input);
       }
     }
+    const idBySlug = W.slugToId.get(tok);
+    if (idBySlug) {
+      const rec = W.mapById.get(idBySlug);
+      if (rec && rec.input && !rec.input.disabled && !isLabelUnavailable(rec.label)) {
+        return __selectSingle(list, rec.input);
+      }
+    }
   }
 
-  // Token-index candidates
+  // 2) Token-index candidates
   const candidates = new Set();
   for (const tok of want) {
     const ids = W.tokensToIds.get(tok);
@@ -522,11 +541,11 @@ function clickWidgetFirstAvailable(tokens = [], root = document) {
   }
 
   let best = null;
-  const pickFrom = candidates.size ? [...candidates] : [...W.mapById.keys()];
+  const pickFrom = candidates.size ? candidates : W.mapById.keys();
   for (const id of pickFrom) {
     const rec = W.mapById.get(id);
     if (!rec || !rec.input || rec.input.disabled || isLabelUnavailable(rec.label)) continue;
-    if (want.some(t => rec.text.includes(t) || id.toLowerCase() === t)) { best = rec; break; }
+    if (want.some(t => rec.text.includes(t) || rec.slug === t || id.toLowerCase() === t)) { best = rec; break; }
   }
 
   if (!best) return { changed: false, picked: null };
@@ -535,6 +554,7 @@ function clickWidgetFirstAvailable(tokens = [], root = document) {
   function __selectSingle(listEl, targetInput) {
     let changed = false;
 
+    // Uncheck others only if needed
     const checked = listEl.querySelectorAll('input[type="checkbox"][id]:checked');
     for (const i of checked) {
       if (i === targetInput) continue;
@@ -543,9 +563,10 @@ function clickWidgetFirstAvailable(tokens = [], root = document) {
       changed = true;
     }
 
-    const lab = targetInput.id ? listEl.querySelector(`label[for="${CSS.escape(targetInput.id)}"]`) : null;
     const before = targetInput.checked;
-    if (lab) { try { lab.click(); } catch { try { targetInput.click(); } catch { } } }
+    const lab = targetInput.id ? listEl.querySelector(`label[for="${CSS.escape(targetInput.id)}"]`) : null;
+    if (!before) { try { (lab || targetInput).click(); } catch { targetInput.checked = true; } }
+
     if (!targetInput.checked) {
       targetInput.checked = true;
       targetInput.setAttribute('aria-checked', 'true');
@@ -596,7 +617,7 @@ async function smartNextOrSubmit(card, allowSubmit, tokensForWidget = []) {
   const next = getNextBtn(card); const oldId = card.id || ""; const qid = cardIdToQid(card);
 
   const guardBackIfOldHasError = async (label = "next") => {
-    const moved = await waitCardChange(oldId, { wait: 360 }); if (!moved) return null;
+    const moved = await waitCardChange(oldId, { wait: 300 }); if (!moved) return null;
     if (railHasError(qid)) { await gotoCardByQid(qid, { timeout: 2000, poll: 120 }); return null; }
     return label;
   };
@@ -610,8 +631,8 @@ async function smartNextOrSubmit(card, allowSubmit, tokensForWidget = []) {
 
     if (hasWidgetInCard(card) && hasLineErrorInCard(card)) {
       await nudgeWidgetDirtyInCard(card);
-      await waitCardCleanFast(card, { timeout: 1400 });
-      await waitRailClearedFast(qid, { timeout: 1800 });
+      await waitCardCleanFast(card, { timeout: T.cardCleanTimeout });
+      await waitRailClearedFast(qid, { timeout: T.railTimeout });
 
       if (isDisabledBtn(next)) tryAgreeToggles(card);
       next.click();
@@ -625,7 +646,7 @@ async function smartNextOrSubmit(card, allowSubmit, tokensForWidget = []) {
     const submit = card.querySelector("button[class*='form-submit-button']") || document.querySelector("button[class*='form-submit-button']");
     if (submit && isVisible(submit) && !isDisabledBtn(submit)) {
       submit.scrollIntoView({ block: "center" }); submit.click();
-      const moved = await waitCardChange(oldId, { wait: 360 });
+      const moved = await waitCardChange(oldId, { wait: 300 });
       if (moved && railHasError(qid)) { await gotoCardByQid(qid, { timeout: 2000, poll: 120 }); return null; }
       return "submitted";
     }
@@ -676,7 +697,7 @@ if (IS_IFRAME && !window.__JF_IFRAME_READY__) {
           if (!isLabelUnavailable(lab)) continue;
           try { pointerSeq(lab || input); } catch { }
           try { (lab || input).click(); } catch { }
-          await delay(50);
+          await delay(40);
           if (input.checked) {
             try { input.checked = false; input.setAttribute('aria-checked', 'false'); } catch { }
             try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch { }
@@ -694,6 +715,32 @@ if (IS_IFRAME && !window.__JF_IFRAME_READY__) {
       try { ev.source.postMessage({ type: 'JF_WIDGET_RESOLVED', fixed }, ev.origin || '*'); } catch { }
       return;
     }
+  }, false);
+}
+
+/* ===================== IFRAME: ultra-fast handler using dedicated port ===================== */
+if (IS_IFRAME && !window.__JF_IFRAME_FAST_SELECT__) {
+  window.__JF_IFRAME_FAST_SELECT__ = true;
+
+  const quickReady = () => !!document.querySelector(LIST_SEL);
+
+  window.addEventListener("message", (ev) => {
+    const data = ev.data || {};
+    if (data.type !== "JF_WIDGET_SELECT_FAST") return;
+
+    const port = ev.ports && ev.ports[0];
+    if (!port) return;
+
+    const doSelect = () => {
+      const r = clickWidgetFirstAvailable(data.tokens || [], document);
+      const list = listRoot(document);
+      const values = Array.from(list?.querySelectorAll('input[type="checkbox"][id]:checked') || [])
+        .map(i => (i.value || i.id || '').trim());
+      try { port.postMessage({ type: "JF_WIDGET_SELECTED", changed: !!r.changed, picked: r.picked ?? null, values }); } catch { }
+    };
+
+    if (quickReady()) doSelect();
+    else setTimeout(doSelect, 0); // micro-yield
   }, false);
 }
 
@@ -716,9 +763,9 @@ async function rescueCurrentCard(
   const card = getActiveCard(); if (!card) return false;
 
   if (hasWidgetInCard(card) && shouldTickCard(card, enabledDaysSet, includeSpecialEvent)) {
-    await selectWidgetOptionsInCard(card, tokensForWidget, 1200, { single: true });
-    await nudgeWidgetDirtyInCard(card, 1000);
-    await clearInvalidAndUnlockNext(card, 1100, { unlock: false });
+    await selectWidgetOptionsInCard(card, tokensForWidget, 900, { single: true });
+    // Only one of these is needed; keep the clearer path:
+    await clearInvalidAndUnlockNext(card, 900, { unlock: true });
     await waitCardCleanFast(card, { timeout: T.cardCleanTimeout });
     await waitRailClearedFast(cardIdToQid(card), { timeout: T.railTimeout });
   }
@@ -728,7 +775,7 @@ async function rescueCurrentCard(
   return moved === 'next';
 }
 
-async function hardResetActiveCard() { const card = getActiveCard(); if (!card) return; const qid = cardIdToQid(card); const lbl = qs(`#cardProgress .jfProgress-itemLabel[data-item-id="${qid}"]`); lbl?.closest('.jfProgress-item')?.click(); await delay(160); }
+async function hardResetActiveCard() { const card = getActiveCard(); if (!card) return; const qid = cardIdToQid(card); const lbl = qs(`#cardProgress .jfProgress-itemLabel[data-item-id="${qid}"]`); lbl?.closest('.jfProgress-item')?.click(); await delay(140); }
 function nextFrame() { return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); }
 function waitWithObserver(target, { predicate, timeout = 2000 }) {
   return new Promise(resolve => {
@@ -737,8 +784,8 @@ function waitWithObserver(target, { predicate, timeout = 2000 }) {
     setTimeout(() => { obs.disconnect(); resolve(predicate?.() || false); }, timeout);
   });
 }
-async function waitCardCleanFast(card, { timeout = 1800 } = {}) { const ok = () => !(card.querySelector('li.form-line-error, .form-line.form-validation-error, li[aria-invalid="true"]') || card.classList.contains('animate-shake') || card.querySelector('.jfCard.animate-shake')); const res = await waitWithObserver(card, { predicate: ok, timeout }); if (!res) return ok(); await nextFrame(); return true; }
-async function waitRailClearedFast(qid, { timeout = 2500 } = {}) { const lbl = qs(`#cardProgress .jfProgress-itemLabel[data-item-id="${qid}"]`); const item = lbl?.closest('.jfProgress-item'); const ok = () => !railHasError(qid); const res = await waitWithObserver(item || document.body, { predicate: ok, timeout }); if (!res) return ok(); await nextFrame(); return true; }
+async function waitCardCleanFast(card, { timeout = 1200 } = {}) { const ok = () => !(card.querySelector('li.form-line-error, .form-line.form-validation-error, li[aria-invalid="true"]') || card.classList.contains('animate-shake') || card.querySelector('.jfCard.animate-shake')); const res = await waitWithObserver(card, { predicate: ok, timeout }); if (!res) return ok(); await nextFrame(); return true; }
+async function waitRailClearedFast(qid, { timeout = 1800 } = {}) { const lbl = qs(`#cardProgress .jfProgress-itemLabel[data-item-id="${qid}"]`); const item = lbl?.closest('.jfProgress-item'); const ok = () => !railHasError(qid); const res = await waitWithObserver(item || document.body, { predicate: ok, timeout }); if (!res) return ok(); await nextFrame(); return true; }
 
 /* ===================== Submit-error resolver (multi-pass) ===================== */
 async function resolveErrorsOnCard(
@@ -751,13 +798,13 @@ async function resolveErrorsOnCard(
   const railHas = collectErrorQids().indexOf(qid) !== -1;
   if (hasWidgetInCard(card) && (hasLineErrorInCard(card) || railHas)) {
     for (let i = 0; i < 2; i++) {
-      const ok = await clearInvalidAndUnlockNext(card, 1000, { unlock: true });
+      const ok = await clearInvalidAndUnlockNext(card, 900, { unlock: true });
       if (ok) break;
-      await delay(100);
+      await delay(80);
     }
 
     if (shouldTickCard(card, enabledDaysSet, includeSpecialEvent)) {
-      const sel = await selectWidgetOptionsInCard(card, tokensForWidget, 1200, { single: true });
+      const sel = await selectWidgetOptionsInCard(card, tokensForWidget, 900, { single: true });
       if (!sel.picked) {
         const moved = await smartNextOrSubmit(card, false, tokensForWidget);
         return moved === 'next';
@@ -776,11 +823,11 @@ async function resolveErrorsOnCard(
 async function handleSubmitErrors({
   tokensForWidget = [],
   maxLoops = 6,
-  waitForQidsMs = 3500,
+  waitForQidsMs = 3000,
   enabledDaysSet = null,
   includeSpecialEvent = false
 } = {}) {
-  const waitIds = async () => { const t0 = Date.now(); let ids = collectErrorQids(); while (!ids.length && Date.now() - t0 < waitForQidsMs) { await delay(150); ids = collectErrorQids(); } return ids; };
+  const waitIds = async () => { const t0 = Date.now(); let ids = collectErrorQids(); while (!ids.length && Date.now() - t0 < waitForQidsMs) { await delay(120); ids = collectErrorQids(); } return ids; };
 
   __RESOLVING_ERRORS__ = true;
   try {
@@ -788,10 +835,10 @@ async function handleSubmitErrors({
     for (let loop = 0; loop < maxLoops; loop++) {
       const qids = await waitIds(); if (!qids.length) break;
       for (const qid of qids) {
-        await gotoCardByQid(qid, { timeout: 4500, poll: 120 }); await delay(80);
+        await gotoCardByQid(qid, { timeout: 3000, poll: 100 }); await delay(60);
         await resolveErrorsOnCard(tokensForWidget, { advance: true, enabledDaysSet, includeSpecialEvent });
-        await waitRailClearedFast(qid, { timeout: 2200 });
-        const cur = getActiveCard(); if (cur && cardIdToQid(cur) === qid) { await waitCardCleanFast(cur, { timeout: 1800 }); }
+        await waitRailClearedFast(qid, { timeout: 1600 });
+        const cur = getActiveCard(); if (cur && cardIdToQid(cur) === qid) { await waitCardCleanFast(cur, { timeout: 1000 }); }
         await nextFrame();
       }
       const now = collectErrorQids().length; if (now === 0) break;
@@ -833,8 +880,8 @@ async function mainLoop(payload) {
 
     const hasSubmitHere = !!(card.querySelector("button[class*='form-submit-button']") || document.querySelector("button[class*='form-submit-button']"));
     if (hasSubmitHere && allowSubmit && collectErrorQids().length) {
-      await handleSubmitErrors({ tokensForWidget, maxLoops: 6, waitForQidsMs: 3500, enabledDaysSet, includeSpecialEvent });
-      await delay(100);
+      await handleSubmitErrors({ tokensForWidget, maxLoops: 6, waitForQidsMs: 3000, enabledDaysSet, includeSpecialEvent });
+      await delay(80);
       continue;
     }
     if (hasSubmitHere) lastSubmitQid = cardIdToQid(card);
@@ -856,16 +903,16 @@ async function mainLoop(payload) {
     const cardId = card.id || "";
     if (cardId === lastCardId) {
       if (hasWidgetInCard(card) && hasLineErrorInCard(card)) { await nudgeWidgetDirtyInCard(card); }
-      if (__RESOLVING_ERRORS__) { await delay(100); continue; }
+      if (__RESOLVING_ERRORS__) { await delay(80); continue; }
       const act0 = await smartNextOrSubmit(card, allowSubmit, tokensForWidget);
       if (act0 === "next" || act0 === "submitted") {
-        if (act0 === "submitted") { await delay(50); await waitErrorsReady({ timeout: T.errorsWaitMax, poll: 120 }); }
+        if (act0 === "submitted") { await delay(40); await waitErrorsReady({ timeout: T.errorsWaitMax, poll: 120 }); }
         if (act0 === "submitted" && !hasValidationErrors() && collectErrorQids().length === 0) { window.isFilling = false; break; }
         if (act0 === "submitted") {
-          const stepped = await stepIntoErrorViaPrev({ tokensForWidget, warmup: 300, enabledDaysSet, includeSpecialEvent }); if (stepped) { await delay(delayTime); continue; }
-          const remaining = await handleSubmitErrors({ tokensForWidget, maxLoops: 3, waitForQidsMs: 9000, enabledDaysSet, includeSpecialEvent });
+          const stepped = await stepIntoErrorViaPrev({ tokensForWidget, warmup: 250, enabledDaysSet, includeSpecialEvent }); if (stepped) { await delay(delayTime); continue; }
+          const remaining = await handleSubmitErrors({ tokensForWidget, maxLoops: 3, waitForQidsMs: 8000, enabledDaysSet, includeSpecialEvent });
           if (remaining === 0 && lastSubmitQid) {
-            await gotoCardByQid(lastSubmitQid); await delay(300);
+            await gotoCardByQid(lastSubmitQid); await delay(240);
             const submitCard = getActiveCard(); submitCard?.querySelector("button[class*='form-submit-button']")?.click();
             await waitErrorsReady({ timeout: T.errorsWaitMax, poll: 120 });
             if (!hasValidationErrors() && collectErrorQids().length === 0) { window.isFilling = false; break; }
@@ -921,15 +968,14 @@ async function mainLoop(payload) {
       }
     }
 
-    // ==== Widget select — SINGLE by priority (only once per card)
+    // ==== Widget select — SINGLE by priority (only once per eligible card)
     if (tokensForWidget.length && hasWidgetInCard(card) && !widgetSentForCard.has(card.id)) {
       if (!shouldTickCard(card, enabledDaysSet, includeSpecialEvent)) {
-        // mark visited so we don't keep re-checking an ineligible card
         widgetSentForCard.add(card.id);
       } else {
-        await selectWidgetOptionsInCard(card, tokensForWidget, 2000, { single: true });
+        await selectWidgetOptionsInCard(card, tokensForWidget, 900, { single: true });
         widgetSentForCard.add(card.id);
-        await delay(80); // let VALUE/DIRTY bridge unlock NEXT
+        // bridge will unlock NEXT via VALUE/DIRTY; no extra nudge here
       }
     }
 
@@ -937,9 +983,9 @@ async function mainLoop(payload) {
     const act = await smartNextOrSubmit(card, allowSubmit, tokensForWidget);
     if (act === "next") { await delay(delayTime); continue; }
     if (act === "submitted") {
-      await delay(50); await waitErrorsReady({ timeout: T.errorsWaitMax, poll: 120 });
+      await delay(40); await waitErrorsReady({ timeout: T.errorsWaitMax, poll: 120 });
       if (!hasValidationErrors() && collectErrorQids().length === 0) { window.isFilling = false; break; }
-      const remaining = await handleSubmitErrors({ tokensForWidget, maxLoops: 3, waitForQidsMs: 4000, enabledDaysSet, includeSpecialEvent });
+      const remaining = await handleSubmitErrors({ tokensForWidget, maxLoops: 3, waitForQidsMs: 3500, enabledDaysSet, includeSpecialEvent });
       if (remaining === 0 && lastSubmitQid) {
         await gotoCardByQid(lastSubmitQid); await delay(200);
         const submitCard = getActiveCard(); submitCard?.querySelector("button[class*='form-submit-button']")?.click();
@@ -954,7 +1000,7 @@ async function mainLoop(payload) {
 /* ===================== Step into previous error card (optional tick) ===================== */
 async function stepIntoErrorViaPrev({
   tokensForWidget = [],
-  warmup = 300,
+  warmup = 250,
   enabledDaysSet = null,
   includeSpecialEvent = false
 } = {}) {
@@ -968,8 +1014,8 @@ async function stepIntoErrorViaPrev({
 
   if (tokensForWidget.length && hasWidgetInCard(card) &&
     shouldTickCard(card, enabledDaysSet, includeSpecialEvent)) {
-    await selectWidgetOptionsInCard(card, tokensForWidget, 2000, { single: true });
-    await delay(120);
+    await selectWidgetOptionsInCard(card, tokensForWidget, 900, { single: true });
+    await delay(100);
   }
 
   const act = await smartNextOrSubmit(card, false, tokensForWidget);
