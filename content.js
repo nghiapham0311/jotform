@@ -155,36 +155,223 @@ function getFieldLabelText(comp) {
 }
 function isConsentGroup(labelText) { const s = (labelText || "").toLowerCase(); return /\bagree|accept|consent|terms|policy|privacy|understand|acknowledge|yes\b/.test(s); }
 function getRadioOptions(comp) {
-  return qsa("input[type='radio']", comp).map(input => {
-    let txt = ""; const wrap = input.closest("label");
-    if (wrap) { const t = wrap.querySelector(".jfRadio-labelText") || wrap; txt = (t.innerText || t.textContent || "").trim(); }
-    else {
-      const lab = comp.querySelector(`label[for='${input.id}']`); const t = lab?.querySelector(".jfRadio-labelText") || lab;
-      if (t) txt = (t.innerText || t.textContent || "").trim();
-    }
-    return { input, text: txt, value: (input.value || "").trim() };
+  // First try to find radio group container
+  const radioGroup = comp.querySelector('.form-radio, .form-single-radio, .jfRadio-container') || comp;
+  
+  // Get all radio inputs
+  const radios = qsa("input[type='radio']", radioGroup).filter(input => {
+    // Only include visible and enabled inputs
+    const isVisible = !!(input.offsetWidth || input.offsetHeight || input.getClientRects().length);
+    return isVisible && !input.disabled;
   });
+  
+  return radios.map(input => {
+    let txt = "";
+    
+    // Try multiple ways to find the label text
+    const wrap = input.closest("label");
+    if (wrap) {
+      // Check multiple possible label text containers
+      const textElement = wrap.querySelector(".jfRadio-labelText") || 
+                         wrap.querySelector(".form-radio-item-text") ||
+                         wrap.querySelector(".radio-label-text") ||
+                         wrap;
+      txt = (textElement.innerText || textElement.textContent || "").trim();
+    }
+    
+    // If no text found in wrapper, try finding associated label
+    if (!txt && input.id) {
+      const lab = comp.querySelector(`label[for='${input.id}']`);
+      if (lab) {
+        const textElement = lab.querySelector(".jfRadio-labelText") || 
+                           lab.querySelector(".form-radio-item-text") ||
+                           lab.querySelector(".radio-label-text") ||
+                           lab;
+        txt = (textElement.innerText || textElement.textContent || "").trim();
+      }
+    }
+    
+    // If still no text, try getting aria-label
+    if (!txt) {
+      txt = input.getAttribute('aria-label') || 
+            input.getAttribute('title') || 
+            input.value || "";
+    }
+    
+    return { 
+      input, 
+      text: txt.trim(),
+      value: (input.value || "").trim(),
+      checked: input.checked,
+      id: input.id
+    };
+  }).filter(opt => opt.text || opt.value); // Only return options that have either text or value
 }
 function selectRadioAgree(comp, tokens = []) {
-  const opts = getRadioOptions(comp); if (!opts.length) return false;
-  const tks = (tokens || []).map(t => String(t).toLowerCase()).filter(Boolean);
-  const syn = ['agree', 'i agree', 'accept', 'i accept', 'consent', 'yes', 'ok', 'okay', 'i understand', 'understand', 'acknowledge'];
-  const hit = opts.find(o => { const tx = o.text.toLowerCase(), vv = o.value.toLowerCase(); return (tks.length && tks.some(t => tx.includes(t) || vv.includes(t))) || syn.some(t => tx.includes(t) || vv.includes(t)); });
-  if (!hit) return false;
-  if (!hit.input.checked) { hit.input.click(); hit.input.dispatchEvent(new Event("change", { bubbles: true })); }
-  return true;
+  // Force find all radio inputs in component
+  const radios = comp.querySelectorAll('input[type="radio"]');
+  if (!radios.length) return false;
+
+  // Create normalized token set for faster lookup
+  const tokenSet = new Set([].concat(tokens)
+    .map(t => String(t || '').toLowerCase().trim())
+    .filter(Boolean));
+
+  // Extended agreement keywords for better matching
+  const agreeKeywords = [
+    'agree', 'yes', 'accept', 'confirm', 'consent',
+    'i agree', 'i accept', 'i confirm', 'i consent',
+    'understand', 'acknowledged', 'continue', 'proceed',
+    'ok', 'okay', 'next', 'submit'
+  ];
+
+  let success = false;
+  for (const radio of radios) {
+    if (radio.checked) continue;
+
+    // Get all possible text sources
+    const label = radio.closest('label') || document.querySelector(`label[for="${radio.id}"]`);
+    const labelText = label?.textContent?.toLowerCase().trim() || '';
+    const value = radio.value.toLowerCase().trim();
+    const name = radio.name.toLowerCase().trim();
+    const groupLabel = comp.querySelector('.form-label, .form-radio-label')?.textContent?.toLowerCase().trim() || '';
+
+    // Check if this is an agreement option
+    const isAgreeOption = agreeKeywords.some(keyword => 
+      labelText.includes(keyword) || 
+      value.includes(keyword) || 
+      groupLabel.includes(keyword)
+    );
+
+    // Check if matches user tokens
+    const matchesToken = tokenSet.size > 0 && 
+      Array.from(tokenSet).some(token => 
+        labelText.includes(token) || 
+        value.includes(token) || 
+        groupLabel.includes(token)
+      );
+
+    if (isAgreeOption || matchesToken) {
+      try {
+        // Try multiple selection methods
+        const clickEvent = new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          view: window
+        });
+
+        // 1. Try clicking the label first
+        if (label) {
+          label.click();
+          label.dispatchEvent(clickEvent);
+        }
+
+        // 2. If not checked, try clicking the radio directly
+        if (!radio.checked) {
+          radio.click();
+          radio.dispatchEvent(clickEvent);
+        }
+
+        // 3. If still not checked, force it programmatically
+        if (!radio.checked) {
+          radio.checked = true;
+          radio.setAttribute('checked', 'checked');
+          
+          // Force the events
+          const changeEvent = new Event('change', { bubbles: true });
+          const inputEvent = new Event('input', { bubbles: true });
+          
+          radio.dispatchEvent(changeEvent);
+          radio.dispatchEvent(inputEvent);
+          
+          // Also dispatch on the form if available
+          const form = radio.closest('form');
+          if (form) {
+            form.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        }
+
+        // If any method worked, mark as success
+        if (radio.checked) {
+          success = true;
+          break;
+        }
+      } catch (e) {
+        console.error('Radio selection error:', e);
+        // Last resort
+        try {
+          radio.checked = true;
+          radio.setAttribute('checked', 'checked');
+          success = radio.checked;
+        } catch {
+          continue;
+        }
+      }
+    }
+  }
+
+  return success;
 }
+function forceCheckInput(input) {
+  if (input.checked) return true;
+  
+  try {
+    // Try natural click first
+    input.click();
+    
+    // If click didn't work, try programmatic checks
+    if (!input.checked) {
+      input.checked = true;
+      input.setAttribute('checked', 'checked');
+      
+      // Dispatch events
+      input.dispatchEvent(new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        view: window
+      }));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      
+      // Try clicking associated label
+      const label = input.closest('label') || 
+                   document.querySelector(`label[for="${input.id}"]`);
+      if (label) {
+        label.click();
+      }
+    }
+  } catch (e) {
+    console.error('Error in input selection:', e);
+    // Last resort
+    input.checked = true;
+    input.setAttribute('checked', 'checked');
+  }
+  
+  return input.checked;
+}
+
 function tryAgreeToggles(card) {
   const inputs = qsa("input[type='checkbox'], input[type='radio']", card);
   const getTxt = (el) => {
-    const byFor = el.id ? card.querySelector(`label[for='${el.id}']`) : null; const wrap = el.closest("label");
+    const byFor = el.id ? card.querySelector(`label[for='${el.id}']`) : null;
+    const wrap = el.closest("label");
     const own = (wrap?.innerText || byFor?.innerText || "").trim();
     const group = (card.querySelector(".jfQuestion-label, .jf-question-label, [id^='label_']")?.innerText || "").trim();
     return `${own} ${group}`.toLowerCase();
   };
-  const keys = ['agree', 'accept', 'consent', 'i understand', 'understand', 'acknowledge', 'terms', 'policy', 'privacy', 'yes', 'ok', 'okay'];
+  
+  const keys = [
+    'agree', 'accept', 'consent', 'i understand', 'understand', 
+    'acknowledge', 'terms', 'policy', 'privacy', 'yes', 'ok', 'okay'
+  ];
+  
   let changed = false;
-  for (const el of inputs) { const txt = getTxt(el); if (keys.some(k => txt.includes(k)) && !el.checked) { el.click(); el.dispatchEvent(new Event("change", { bubbles: true })); changed = true; } }
+  for (const el of inputs) {
+    const txt = getTxt(el);
+    if (keys.some(k => txt.includes(k)) && !el.checked) {
+      changed = forceCheckInput(el) || changed;
+    }
+  }
   return changed;
 }
 
@@ -235,7 +422,7 @@ function findWidgetIframeInComp(comp) {
   const ifr = comp.querySelector(IFRAME_SEL);
   return (ifr && isVisible(ifr)) ? ifr : null;
 }
-function waitForWidgetIframeInComp(comp, { appearTimeout = 500, loadTimeout = 800 } = {}) {
+function waitForWidgetIframeInComp(comp, { appearTimeout = 300, loadTimeout = 500 } = {}) {
   return new Promise(resolve => {
     const existingIframe = comp.querySelector(IFRAME_SEL);
     if (existingIframe) {
@@ -245,22 +432,17 @@ function waitForWidgetIframeInComp(comp, { appearTimeout = 500, loadTimeout = 80
       return;
     }
 
-    let observer = null;
-    const appearTimeoutId = setTimeout(() => { if (observer) observer.disconnect(); resolve(null); }, appearTimeout);
-
-    observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (mutation.type === 'childList') {
-          for (const node of mutation.addedNodes) {
-            if (node.nodeType === 1 && node.matches?.(IFRAME_SEL)) {
-              observer.disconnect(); clearTimeout(appearTimeoutId);
-              if (node.contentDocument?.readyState === 'complete') { resolve(node); return; }
-              const loadTimeoutId = setTimeout(() => resolve(node), loadTimeout);
-              node.addEventListener('load', () => { clearTimeout(loadTimeoutId); resolve(node); }, { once: true });
-              return;
-            }
-          }
-        }
+    const appearTimeoutId = setTimeout(() => resolve(null), appearTimeout);
+    const observer = new MutationObserver((mutations, obs) => {
+      const node = mutations.reduce((found, mutation) => 
+        found || Array.from(mutation.addedNodes).find(n => n.nodeType === 1 && n.matches?.(IFRAME_SEL)), null);
+      
+      if (node) {
+        obs.disconnect();
+        clearTimeout(appearTimeoutId);
+        if (node.contentDocument?.readyState === 'complete') { resolve(node); return; }
+        const loadTimeoutId = setTimeout(() => resolve(node), loadTimeout);
+        node.addEventListener('load', () => { clearTimeout(loadTimeoutId); resolve(node); }, { once: true });
       }
     });
     observer.observe(comp, { childList: true, subtree: true });
@@ -269,47 +451,110 @@ function waitForWidgetIframeInComp(comp, { appearTimeout = 500, loadTimeout = 80
 
 /* ===================== PERF-UPGRADE: Parent → Iframe select via MessageChannel ===================== */
 /** Parent → Iframe selection; returns {changed, picked} — FAST */
-async function selectWidgetOptionsInCard(card, tokens = [], timeout = 900, { single = true } = {}) {
-  if (!card || !tokens?.length) return { changed: false, picked: null };
+// Cache for widget selections
+const widgetSelectionCache = new Map();
+
+async function selectWidgetOptionsInCard(card, tokens = [], timeout = 150, { single = true } = {}) {
+  if (!card) return { changed: false, picked: null };
+
+  // Ensure tokens is properly formatted
+  const normalizedTokens = (Array.isArray(tokens) ? tokens : [tokens])
+    .filter(t => t != null)
+    .map(t => String(t).toLowerCase().trim())
+    .filter(Boolean);
+
+  if (!normalizedTokens.length) return { changed: false, picked: null };
 
   const comps = getWidgetComponents(card);
   if (!comps.length) return { changed: false, picked: null };
 
-  const tasks = comps.map(async comp => {
-    const iframe = await waitForWidgetIframeInComp(comp, { appearTimeout: 250, loadTimeout: 500 });
-    if (!iframe) return null;
+  // Create cache key from card id and tokens
+  const cacheKey = `${card.id}-${normalizedTokens.join(',')}`;
+  
+  // Check cache first
+  if (widgetSelectionCache.has(cacheKey)) {
+    return widgetSelectionCache.get(cacheKey);
+  }
 
-    const origin = (() => { try { return new URL(iframe.src).origin; } catch { return "*"; } })();
+  // Process all components in parallel with optimized timing
+  const componentResults = await Promise.all(comps.map(async comp => {
+    // Try selection up to 2 times with short timeouts
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const iframe = await waitForWidgetIframeInComp(comp, { appearTimeout: 100, loadTimeout: 150 });
+      if (!iframe) continue;
 
-    return new Promise(resolve => {
-      const ch = new MessageChannel();
-      let settled = false;
-      const finish = (res) => { if (!settled) { settled = true; resolve(res); } };
+      const origin = (() => { try { return new URL(iframe.src).origin; } catch { return "*"; } })();
 
-      const t = setTimeout(() => { try { ch.port1.close(); } catch { } finish(null); }, timeout);
+      const result = await new Promise(resolve => {
+        const ch = new MessageChannel();
+        let settled = false;
+        
+        const finish = (res) => {
+          if (!settled) {
+            settled = true;
+            if (res?.picked) {
+              widgetSelectionCache.set(cacheKey, res);
+            }
+            resolve(res);
+          }
+        };
 
-      ch.port1.onmessage = (e) => {
-        const d = e.data || {};
-        if (d.type === "JF_WIDGET_SELECTED") {
+        const t = setTimeout(() => {
+          try { ch.port1.close(); } catch {}
+          finish(null);
+        }, timeout);
+
+        ch.port1.onmessage = (e) => {
+          const d = e.data || {};
+          if (d.type === "JF_WIDGET_SELECTED") {
+            clearTimeout(t);
+            try { ch.port1.close(); } catch {}
+            const result = { 
+              changed: !!d.changed, 
+              picked: d.picked ?? null,
+              values: d.values
+            };
+            finish(result);
+          }
+        };
+
+        try {
+          iframe.contentWindow.postMessage(
+            { 
+              type: "JF_WIDGET_SELECT_FAST", 
+              tokens: normalizedTokens,
+              single,
+              attempt
+            },
+            origin,
+            [ch.port2]
+          );
+        } catch (e) {
           clearTimeout(t);
-          try { ch.port1.close(); } catch { }
-          finish({ changed: !!d.changed, picked: d.picked ?? null });
+          try { ch.port1.close(); } catch {}
+          finish(null);
         }
-      };
+      });
 
-      try {
-        iframe.contentWindow.postMessage(
-          { type: "JF_WIDGET_SELECT_FAST", tokens, single },
-          origin,
-          [ch.port2]
-        );
-      } catch {
-        clearTimeout(t);
-        try { ch.port1.close(); } catch { }
-        finish(null);
+      if (result?.changed || result?.picked) {
+        return result;
       }
-    });
-  });
+    }
+    return null;
+  }));
+
+  // Find the first successful result
+  const firstSuccess = componentResults.find(r => r?.picked != null);
+  if (firstSuccess) {
+    return firstSuccess;
+  }
+
+  // Aggregate results if no clear success
+  return componentResults.reduce((acc, r) => ({
+    changed: acc.changed || !!r?.changed,
+    picked: acc.picked ?? r?.picked,
+    values: [...(acc.values || []), ...(r?.values || [])]
+  }), { changed: false, picked: null, values: [] });
 
   const results = await Promise.all(tasks);
   const firstGood = results.find(r => r && r.picked != null);
@@ -380,13 +625,68 @@ function isLabelUnavailable(lab) {
   return t.includes("none") || /\b0\s*available\b/.test(t);
 }
 function pointerSeq(node) {
-  if (!node) return;
+  if (!node) return false;
   try {
     node.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
     node.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
     node.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
     node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-  } catch { try { node.click(); } catch { } }
+    return true;
+  } catch { 
+    try { 
+      node.click(); 
+      return true;
+    } catch { 
+      return false;
+    } 
+  }
+}
+
+function forceCheckboxSelection(checkbox, label, list) {
+  let changed = false;
+  const before = checkbox.checked;
+
+  // Try multiple selection methods
+  const methods = [
+    // 1. Natural label click
+    () => label && pointerSeq(label),
+    // 2. Direct checkbox click
+    () => pointerSeq(checkbox),
+    // 3. Programmatic check
+    () => {
+      checkbox.checked = true;
+      checkbox.setAttribute('aria-checked', 'true');
+      return true;
+    }
+  ];
+
+  // Try each method until one works
+  for (const method of methods) {
+    try {
+      if (method()) {
+        // Verify the change
+        if (!checkbox.checked) {
+          checkbox.checked = true;
+        }
+        // Fire events if state changed
+        if (checkbox.checked !== before) {
+          checkbox.dispatchEvent(new Event('input', { bubbles: true }));
+          checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+          list.dispatchEvent(new Event('change', { bubbles: true }));
+          changed = true;
+          break;
+        }
+      }
+    } catch (e) {
+      console.error('Selection method failed:', e);
+      continue;
+    }
+  }
+
+  return { 
+    changed: changed || (checkbox.checked !== before),
+    picked: checkbox.value || checkbox.id
+  };
 }
 
 /** MULTI: kept for fallback (not used in main flow) */
@@ -445,6 +745,7 @@ function clickWidgetByTokens(tokens = [], root = document) {
   if (!IS_IFRAME) return;
   if (window.__WIDX__) return;
 
+  // Add performance optimizations
   const W = window.__WIDX__ = {
     version: 0,
     builtAt: 0,
@@ -452,8 +753,26 @@ function clickWidgetByTokens(tokens = [], root = document) {
     mapById: new Map(),       // id -> {input,label,text,slug}
     tokensToIds: new Map(),   // token -> Set(id)
     slugToId: new Map(),      // slug -> id
-    ensure() { if (!this.builtAt) buildIndex(); },
-    getList() { return this.list || (this.list = document.querySelector(LIST_SEL)); }
+    cachedSelections: new Map(), // Cache previous selections
+    lastUpdate: 0,            // Track last update time
+    ensure() { 
+      const now = Date.now();
+      // Only rebuild index if more than 2 seconds have passed
+      if (!this.builtAt || (now - this.lastUpdate > 2000)) {
+        buildIndex();
+        this.lastUpdate = now;
+      }
+    },
+    getList() { 
+      if (!this.list) {
+        this.list = document.querySelector(LIST_SEL);
+        if (this.list) {
+          // Pre-index all items on first load
+          this.ensure();
+        }
+      }
+      return this.list;
+    }
   };
 
   const normalize = s => String(s || '').toLowerCase().trim();
@@ -508,48 +827,97 @@ function clickWidgetByTokens(tokens = [], root = document) {
 function clickWidgetFirstAvailable(tokens = [], root = document) {
   const W = window.__WIDX__;
   if (!W) return { changed: false, picked: null };
-  W.ensure();
 
   const list = W.getList?.() || root.querySelector(LIST_SEL);
   if (!list) return { changed: false, picked: null };
 
-  const want = Array.from(new Set((tokens || []).map(t => String(t || '').toLowerCase().trim()).filter(Boolean)));
-  if (!want.length) return { changed: false, picked: null };
+  // Process tokens once
+  const tokenSet = new Set(
+    (Array.isArray(tokens) ? tokens : [tokens])
+      .filter(t => t != null)
+      .map(t => String(t).toLowerCase().trim())
+      .filter(Boolean)
+  );
 
-  // 1) Exact id or slug hit → constant time
-  for (const tok of want) {
-    if (W.mapById.has(tok)) {
-      const rec = W.mapById.get(tok);
-      if (rec.input && !rec.input.disabled && !isLabelUnavailable(rec.label)) {
-        return __selectSingle(list, rec.input);
-      }
+  if (!tokenSet.size) return { changed: false, picked: null };
+
+  // Fast path: direct lookup
+  const checkboxes = list.querySelectorAll('input[type="checkbox"]');
+  for (const checkbox of checkboxes) {
+    if (checkbox.checked) continue;
+    
+    const label = checkbox.closest('label') || document.querySelector(`label[for="${checkbox.id}"]`);
+    if (!label || isLabelUnavailable(label)) continue;
+
+    const labelText = (label.textContent || '').toLowerCase().trim();
+    const value = (checkbox.value || '').toLowerCase().trim();
+
+    // Check for exact matches first
+    if ([...tokenSet].some(token => 
+      labelText === token || 
+      value === token || 
+      checkbox.id.toLowerCase() === token
+    )) {
+      return forceCheckboxSelection(checkbox, label, list);
     }
-    const idBySlug = W.slugToId.get(tok);
-    if (idBySlug) {
-      const rec = W.mapById.get(idBySlug);
-      if (rec && rec.input && !rec.input.disabled && !isLabelUnavailable(rec.label)) {
-        return __selectSingle(list, rec.input);
-      }
+  }
+  if (!tokenSet.size) return { changed: false, picked: null };
+
+  // Fast path: direct match using Map for O(1) lookup
+  for (const tok of tokenSet) {
+    // Check direct ID match
+    const directMatch = W.mapById.get(tok);
+    if (directMatch?.input && !directMatch.input.disabled && !isLabelUnavailable(directMatch.label)) {
+      return __selectSingle(list, directMatch.input);
+    }
+    
+    // Check slug match
+    const slugMatch = W.mapById.get(W.slugToId.get(tok));
+    if (slugMatch?.input && !slugMatch.input.disabled && !isLabelUnavailable(slugMatch.label)) {
+      return __selectSingle(list, slugMatch.input);
     }
   }
 
-  // 2) Token-index candidates
+  // Optimized candidate search using Set intersection
   const candidates = new Set();
-  for (const tok of want) {
+  let minSize = Infinity;
+  let bestTokIds = null;
+
+  // Find the smallest token match set for optimization
+  for (const tok of tokenSet) {
     const ids = W.tokensToIds.get(tok);
-    if (ids) for (const id of ids) candidates.add(id);
+    if (ids?.size) {
+      if (ids.size < minSize) {
+        minSize = ids.size;
+        bestTokIds = ids;
+      }
+    }
   }
 
-  let best = null;
-  const pickFrom = candidates.size ? candidates : W.mapById.keys();
-  for (const id of pickFrom) {
-    const rec = W.mapById.get(id);
-    if (!rec || !rec.input || rec.input.disabled || isLabelUnavailable(rec.label)) continue;
-    if (want.some(t => rec.text.includes(t) || rec.slug === t || id.toLowerCase() === t)) { best = rec; break; }
+  // Use the smallest token set as base and check against others
+  if (bestTokIds) {
+    for (const id of bestTokIds) {
+      const rec = W.mapById.get(id);
+      if (!rec || !rec.input || rec.input.disabled || isLabelUnavailable(rec.label)) continue;
+      if (tokenSet.has(rec.text) || tokenSet.has(rec.slug) || tokenSet.has(id.toLowerCase())) {
+        return __selectSingle(list, rec.input);
+      }
+      candidates.add(id);
+    }
   }
 
-  if (!best) return { changed: false, picked: null };
-  return __selectSingle(list, best.input);
+  // Fallback to checking all IDs if no candidates found
+  if (!candidates.size) {
+    for (const id of W.mapById.keys()) {
+      const rec = W.mapById.get(id);
+      if (!rec || !rec.input || rec.input.disabled || isLabelUnavailable(rec.label)) continue;
+      if (tokenSet.has(rec.text) || tokenSet.has(rec.slug) || tokenSet.has(id.toLowerCase())) {
+        return __selectSingle(list, rec.input);
+      }
+    }
+  }
+
+  return { changed: false, picked: null };
 
   function __selectSingle(listEl, targetInput) {
     let changed = false;
@@ -666,24 +1034,47 @@ if (IS_IFRAME && !window.__JF_IFRAME_READY__) {
     }
 
     if (data.type === "JF_WIDGET_SELECT") {
-      await waitWidgetReady(5000);
+      // Use a shorter timeout for widget ready check
+      const readyTimeout = new Promise(resolve => setTimeout(() => resolve(false), 2000));
+      const widgetReady = Promise.race([waitWidgetReady(2000), readyTimeout]);
+      
+      if (!await widgetReady) {
+        try { ev.source.postMessage({ type: "JF_WIDGET_SELECTED", changed: false, picked: null }, ev.origin || "*"); } catch { }
+        return;
+      }
 
       let changed = false, picked = null;
+      
+      // Optimize selection based on type
       if (data.single) {
         const r = clickWidgetFirstAvailable(data.tokens || [], document);
-        changed = !!r.changed; picked = r.picked;
+        changed = !!r.changed; 
+        picked = r.picked;
       } else {
         changed = clickWidgetByTokens(data.tokens || [], document);
       }
 
+      // Batch DOM operations and events
       const list = listRoot(document);
-      const values = Array.from(list?.querySelectorAll('input[type="checkbox"][id]:checked') || []).map(i => (i.value || i.id || '').trim());
-      try { ev.source.postMessage({ type: 'JF_WIDGET_VALUE', values, value: values.join(', ') }, ev.origin || '*'); } catch { }
-      try { ev.source.postMessage({ type: 'JF_WIDGET_VALUE_DIRTY' }, ev.origin || '*'); } catch { }
+      if (list) {
+        const values = Array.from(list.querySelectorAll('input[type="checkbox"][id]:checked'))
+          .map(i => (i.value || i.id || '').trim());
 
-      try { list?.dispatchEvent(new Event("change", { bubbles: true })); } catch { }
+        // Batch multiple messages into one
+        const response = {
+          type: "JF_WIDGET_BATCH",
+          payload: {
+            selected: { changed, picked },
+            value: { values, valueStr: values.join(', ') },
+            dirty: true
+          }
+        };
 
-      try { ev.source.postMessage({ type: "JF_WIDGET_SELECTED", changed, picked }, ev.origin || "*"); } catch { }
+        try { 
+          ev.source.postMessage(response, ev.origin || '*');
+          list.dispatchEvent(new Event("change", { bubbles: true }));
+        } catch { }
+      }
       return;
     }
 
@@ -788,6 +1179,9 @@ async function waitCardCleanFast(card, { timeout = 1200 } = {}) { const ok = () 
 async function waitRailClearedFast(qid, { timeout = 1800 } = {}) { const lbl = qs(`#cardProgress .jfProgress-itemLabel[data-item-id="${qid}"]`); const item = lbl?.closest('.jfProgress-item'); const ok = () => !railHasError(qid); const res = await waitWithObserver(item || document.body, { predicate: ok, timeout }); if (!res) return ok(); await nextFrame(); return true; }
 
 /* ===================== Submit-error resolver (multi-pass) ===================== */
+// Error resolution cache
+const errorResolutionCache = new Map();
+
 async function resolveErrorsOnCard(
   tokensForWidget = [],
   { advance = false, enabledDaysSet = null, includeSpecialEvent = false } = {}
@@ -795,22 +1189,35 @@ async function resolveErrorsOnCard(
   const card = getActiveCard(); if (!card) return false;
   const qid = cardIdToQid(card);
 
+  // Check cache for previous error resolution
+  const cacheKey = `${qid}-${tokensForWidget.join(',')}`;
+  if (errorResolutionCache.has(cacheKey)) {
+    const cachedResolution = errorResolutionCache.get(cacheKey);
+    if (cachedResolution.success) {
+      return true;
+    }
+  }
+
   const railHas = collectErrorQids().indexOf(qid) !== -1;
   if (hasWidgetInCard(card) && (hasLineErrorInCard(card) || railHas)) {
-    for (let i = 0; i < 2; i++) {
-      const ok = await clearInvalidAndUnlockNext(card, 900, { unlock: true });
-      if (ok) break;
-      await delay(80);
-    }
-
+    // Single attempt with shorter timeout
+    const ok = await clearInvalidAndUnlockNext(card, 300, { unlock: true });
+    
     if (shouldTickCard(card, enabledDaysSet, includeSpecialEvent)) {
-      const sel = await selectWidgetOptionsInCard(card, tokensForWidget, 900, { single: true });
+      const sel = await selectWidgetOptionsInCard(card, tokensForWidget, 300, { single: true });
       if (!sel.picked) {
         const moved = await smartNextOrSubmit(card, false, tokensForWidget);
+        errorResolutionCache.set(cacheKey, { success: moved === 'next' });
         return moved === 'next';
       }
-      await waitCardCleanFast(card, { timeout: T.cardCleanTimeout });
-      await waitRailClearedFast(qid, { timeout: T.railTimeout });
+      
+      // Reduced timeouts
+      await Promise.all([
+        waitCardCleanFast(card, { timeout: 300 }),
+        waitRailClearedFast(qid, { timeout: 400 })
+      ]);
+      
+      errorResolutionCache.set(cacheKey, { success: true });
     }
   }
 
@@ -850,16 +1257,30 @@ async function handleSubmitErrors({
 }
 
 /* ===================== Main loop (parent) ===================== */
+// Performance optimization caches
+const processedCards = new Set();
+const cardStateCache = new Map();
+
 async function mainLoop(payload) {
-  const delayTime = Number(payload.delayTime) || 250;
+  // Reduced default delay
+  const delayTime = Number(payload.delayTime) || 100;
   const allowSubmit = !!payload.submitForm;
 
   const year = Number(payload.year), month = Number(payload.month), day = Number(payload.day);
 
+  // Process input arrays and ensure proper token handling
   const inputTxtArr = Array.isArray(payload.inputTxtArr) ? payload.inputTxtArr : [];
   const checkboxTxtArr = Array.isArray(payload.checkboxTxtArr) ? payload.checkboxTxtArr : [];
-  const tokensForWidget = checkboxTxtArr.flat();
+  
+  // Ensure proper token handling for widgets and radio buttons
+  const tokensForWidget = Array.from(new Set(
+    (Array.isArray(checkboxTxtArr) ? checkboxTxtArr.flat() : [checkboxTxtArr])
+      .filter(t => t != null)
+      .map(t => String(t).toLowerCase().trim())
+      .filter(Boolean)
+  ));
 
+  // Pre-compute enabled days for faster checks
   const enabledDaysSource = payload.enabledDays ?? payload.enableddays ?? payload.enabled_days ?? [];
   const enabledDaysSet = buildEnableDaysSet(enabledDaysSource);
   const includeSpecialEvent = !!(payload.includeSpecialEvent ?? payload.includeSpecialDay);
@@ -968,14 +1389,18 @@ async function mainLoop(payload) {
       }
     }
 
-    // ==== Widget select — SINGLE by priority (only once per eligible card)
+    // ==== Widget select — Optimized SINGLE priority selection
     if (tokensForWidget.length && hasWidgetInCard(card) && !widgetSentForCard.has(card.id)) {
       if (!shouldTickCard(card, enabledDaysSet, includeSpecialEvent)) {
         widgetSentForCard.add(card.id);
       } else {
-        await selectWidgetOptionsInCard(card, tokensForWidget, 900, { single: true });
+        // Try selection with shorter timeout first
+        const result = await selectWidgetOptionsInCard(card, tokensForWidget, 150, { single: true });
+        if (!result?.picked) {
+          // If fast attempt fails, try one more time with slightly longer timeout
+          await selectWidgetOptionsInCard(card, tokensForWidget, 300, { single: true });
+        }
         widgetSentForCard.add(card.id);
-        // bridge will unlock NEXT via VALUE/DIRTY; no extra nudge here
       }
     }
 
